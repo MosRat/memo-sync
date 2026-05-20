@@ -137,7 +137,7 @@ export async function checkShortcuts(
 
 export async function createRepository(name: string, temporary: boolean, color: string): Promise<Repository> {
   if (isTauri) return invoke("create_repository", { name, temporary, color });
-  return {
+  const repo: Repository = {
     id: crypto.randomUUID(),
     name,
     kind: temporary ? "Temporary" : "Persistent",
@@ -145,6 +145,27 @@ export async function createRepository(name: string, temporary: boolean, color: 
     color,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
+  };
+  return repo;
+}
+
+export async function updateRepository(
+  id: string,
+  name: string,
+  color: string,
+  syncEnabled: boolean,
+): Promise<Repository> {
+  if (isTauri) return invoke("update_repository", { id, name, color, syncEnabled });
+  const now = new Date().toISOString();
+  const existing = id === demoRepo.id ? demoRepo : null;
+  return {
+    id,
+    name: name.trim() || "Untitled repository",
+    kind: existing?.kind ?? "Persistent",
+    sync_enabled: existing?.kind === "Temporary" ? false : syncEnabled,
+    color,
+    created_at: existing?.created_at ?? now,
+    updated_at: now,
   };
 }
 

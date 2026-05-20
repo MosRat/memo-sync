@@ -189,6 +189,34 @@ impl LocalStore {
         Ok(repo)
     }
 
+    pub async fn update_repository(
+        &self,
+        id: Uuid,
+        name: String,
+        color: String,
+        sync_enabled: bool,
+        device_id: &str,
+    ) -> anyhow::Result<Repository> {
+        let mut repo = self
+            .repository_by_id(id)
+            .await?
+            .context("repository not found")?;
+        repo.name = cleaned_repository_name(name);
+        repo.color = color;
+        repo.sync_enabled = matches!(repo.kind, RepositoryKind::Persistent) && sync_enabled;
+        repo.updated_at = Utc::now();
+        self.upsert_repository(&repo).await?;
+        if repo.sync_enabled {
+            let op = SyncOperation::new(
+                device_id,
+                HybridLogicalClock::now(),
+                SyncOperationKind::UpsertRepository(repo.clone()),
+            );
+            self.append_local_operation(&op).await?;
+        }
+        Ok(repo)
+    }
+
     pub async fn save_memo(
         &self,
         input: SaveMemoInput,
@@ -447,6 +475,16 @@ impl LocalStore {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    async fn repository_by_id(&self, id: Uuid) -> anyhow::Result<Option<Repository>> {
+        let row = sqlx::query(
+            "SELECT id, name, kind, sync_enabled, color, created_at, updated_at FROM repositories WHERE id = ?1",
+        )
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(repository_from_row).transpose()
     }
 
     async fn upsert_memo(&self, memo: &Memo) -> anyhow::Result<()> {
@@ -819,6 +857,15 @@ fn source_from_str(source: &str) -> MemoSource {
     }
 }
 
+fn cleaned_repository_name(name: String) -> String {
+    let cleaned = name.trim();
+    if cleaned.is_empty() {
+        "Untitled repository".to_string()
+    } else {
+        cleaned.chars().take(80).collect()
+    }
+}
+
 fn title_from_body(body: &str) -> String {
     body.lines()
         .find(|line| !line.trim().is_empty())
@@ -897,6 +944,42 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn updating_persistent_repository_queues_sync_operation() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("memo.sqlite");
+        let store = LocalStore::open(&db).await.unwrap();
+        let repo = store
+            .create_repository(
+                "Writing".to_string(),
+                false,
+                "#c86f52".to_string(),
+                "device-a",
+            )
+            .await
+            .unwrap();
+        let saved = store
+            .update_repository(
+                repo.id,
+                "Longform".to_string(),
+                "#5f7597".to_string(),
+                true,
+                "device-a",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(saved.name, "Longform");
+        assert_eq!(saved.color, "#5f7597");
+        assert!(saved.sync_enabled);
+        let pending = store.pending_operations(PUSH_BATCH_LIMIT).await.unwrap();
+        assert!(pending.iter().any(|op| matches!(
+            &op.kind,
+            SyncOperationKind::UpsertRepository(repository)
+                if repository.id == repo.id && repository.name == "Longform"
+        )));
     }
 
     #[tokio::test]

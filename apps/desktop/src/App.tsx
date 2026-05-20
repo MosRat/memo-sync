@@ -32,7 +32,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { lazy, Suspense, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, type CSSProperties, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppSettings, LocalStats, Memo, Repository, SaveMemoInput } from "./types";
 import {
   bootstrap,
@@ -56,6 +56,7 @@ import {
   showSettingsWindow,
   syncNow,
   updateAppSettings,
+  updateRepository,
   windowAction,
 } from "./tauri";
 import { memoSearchText, textStatsLabel, tokenizeTags } from "./search";
@@ -122,6 +123,7 @@ function WorkbenchApp() {
   const [quickText, setQuickText] = useState("");
   const [quickRepo, setQuickRepo] = useState<string>("");
   const [newRepoOpen, setNewRepoOpen] = useState(false);
+  const [editingRepo, setEditingRepo] = useState<Repository | null>(null);
   const [serverUrl, setServerUrl] = useState("http://127.0.0.1:7373");
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [syncText, setSyncText] = useState("Idle");
@@ -425,6 +427,17 @@ function WorkbenchApp() {
       detail: "Sync endpoint, shortcuts, and about",
       run: () => (isDesktopApp ? showSettingsWindow() : setDialog("settings")),
     },
+    ...(activeRepo !== "all" && activeRepository
+      ? [
+          {
+            id: "manage-repository",
+            title: "Manage repository",
+            category: "Repository",
+            detail: activeRepository.name,
+            run: () => setEditingRepo(activeRepository),
+          },
+        ]
+      : []),
     ...repositories.map((repo) => ({
       id: `repo-${repo.id}`,
       title: repo.name,
@@ -681,12 +694,21 @@ function WorkbenchApp() {
     setQuickText(await readClipboardText());
   }
 
-  async function handleCreateRepo(name: string, temporary: boolean) {
-    const repo = await createRepository(name, temporary, colors[repositories.length % colors.length]);
+  async function handleCreateRepo(name: string, temporary: boolean, color: string) {
+    const repo = await createRepository(name, temporary, color);
     setRepositories((items) => [...items, repo]);
+    setActiveRepo(repo.id);
     setQuickRepo(repo.id);
     setNewRepoOpen(false);
+    setLocalStats((stats) => ({ ...stats, repository_count: stats.repository_count + 1 }));
     notify("success", "Repository created", repo.name);
+  }
+
+  async function handleUpdateRepo(repo: Repository, name: string, color: string, syncEnabled: boolean) {
+    const saved = await updateRepository(repo.id, name, color, syncEnabled);
+    setRepositories((items) => items.map((item) => (item.id === saved.id ? saved : item)));
+    setEditingRepo(null);
+    notify("success", "Repository updated", saved.name);
   }
 
   async function handleSync() {
@@ -851,6 +873,11 @@ function WorkbenchApp() {
                 }}
               >
                 Clear
+              </button>
+            )}
+            {activeRepo !== "all" && activeRepository && (
+              <button className="context-clear context-manage" onClick={() => setEditingRepo(activeRepository)}>
+                Manage
               </button>
             )}
           </div>
@@ -1025,7 +1052,8 @@ function WorkbenchApp() {
         </div>
       )}
 
-      {newRepoOpen && <RepositoryDialog onClose={() => setNewRepoOpen(false)} onCreate={handleCreateRepo} />}
+      {newRepoOpen && <RepositoryDialog onClose={() => setNewRepoOpen(false)} onCreate={handleCreateRepo} colorIndex={repositories.length} />}
+      {editingRepo && <RepositoryDialog repository={editingRepo} onClose={() => setEditingRepo(null)} onUpdate={handleUpdateRepo} />}
       {dialog && (
         <AppDialog
           dialog={dialog}
@@ -1635,29 +1663,79 @@ function normalizeShortcutKey(event: KeyboardEvent<HTMLInputElement>) {
   return "";
 }
 
-function RepositoryDialog({ onClose, onCreate }: { onClose: () => void; onCreate: (name: string, temporary: boolean) => void }) {
-  const [name, setName] = useState("");
-  const [temporary, setTemporary] = useState(false);
+function RepositoryDialog({
+  repository,
+  colorIndex = 0,
+  onClose,
+  onCreate,
+  onUpdate,
+}: {
+  repository?: Repository;
+  colorIndex?: number;
+  onClose: () => void;
+  onCreate?: (name: string, temporary: boolean, color: string) => void;
+  onUpdate?: (repository: Repository, name: string, color: string, syncEnabled: boolean) => void;
+}) {
+  const [name, setName] = useState(repository?.name ?? "");
+  const [temporary, setTemporary] = useState(repository?.kind === "Temporary");
+  const [color, setColor] = useState(repository?.color ?? colors[colorIndex % colors.length]);
+  const [syncEnabled, setSyncEnabled] = useState(repository?.sync_enabled ?? !temporary);
+  const editing = Boolean(repository);
+  const canSync = !temporary;
+  const canSubmit = Boolean(name.trim());
+
+  function submit() {
+    if (!canSubmit) return;
+    if (repository && onUpdate) {
+      onUpdate(repository, name.trim(), color, canSync && syncEnabled);
+      return;
+    }
+    onCreate?.(name.trim(), temporary, color);
+  }
+
   return (
     <div className="modal-backdrop">
       <div className="repo-modal">
         <div className="modal-head">
           <div>
             <p className="eyebrow">Repository</p>
-            <h2>New library</h2>
+            <h2>{editing ? "Library details" : "New library"}</h2>
           </div>
           <button className="icon-button" title="Close dialog" aria-label="Close dialog" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
-        <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Research, Inbox, Drafts" />
-        <label className="toggle">
-          <input type="checkbox" checked={temporary} onChange={(event) => setTemporary(event.target.checked)} />
+        <input autoFocus value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => event.key === "Enter" && submit()} placeholder="Research, Inbox, Drafts" />
+        <div className="color-swatches" aria-label="Repository color">
+          {colors.map((item) => (
+            <button
+              key={item}
+              className={color === item ? "active" : ""}
+              style={{ "--swatch": item } as CSSProperties}
+              title={item}
+              onClick={() => setColor(item)}
+            />
+          ))}
+        </div>
+        <label className={editing ? "toggle disabled" : "toggle"}>
+          <input
+            type="checkbox"
+            checked={temporary}
+            disabled={editing}
+            onChange={(event) => {
+              setTemporary(event.target.checked);
+              if (event.target.checked) setSyncEnabled(false);
+            }}
+          />
           <span>Temporary, cleared outside sync</span>
         </label>
-        <button className="primary" onClick={() => name.trim() && onCreate(name.trim(), temporary)}>
+        <label className={canSync ? "toggle" : "toggle disabled"}>
+          <input type="checkbox" checked={canSync && syncEnabled} disabled={!canSync} onChange={(event) => setSyncEnabled(event.target.checked)} />
+          <span>Sync this library</span>
+        </label>
+        <button className="primary" onClick={submit} disabled={!canSubmit}>
           <Check size={17} />
-          Create
+          {editing ? "Save library" : "Create"}
         </button>
       </div>
     </div>

@@ -193,6 +193,7 @@ pub fn run() {
             update_app_settings,
             check_shortcuts,
             create_repository,
+            update_repository,
             save_memo,
             save_quick_memo,
             delete_memo,
@@ -272,6 +273,21 @@ async fn create_repository(
     state
         .store
         .create_repository(name, temporary, color, &state.device_id)
+        .await
+        .map_err(to_string)
+}
+
+#[tauri::command]
+async fn update_repository(
+    state: State<'_, AppState>,
+    id: Uuid,
+    name: String,
+    color: String,
+    sync_enabled: bool,
+) -> Result<Repository, String> {
+    state
+        .store
+        .update_repository(id, name, color, sync_enabled, &state.device_id)
         .await
         .map_err(to_string)
 }

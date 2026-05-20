@@ -505,6 +505,11 @@ textarea:focus {
   background: rgba(185, 104, 77, 0.1);
 }
 
+.context-manage {
+  color: #53685b;
+  background: rgba(112, 139, 118, 0.12);
+}
+
 .view-switcher {
   min-height: 34px;
   display: grid;
@@ -1272,6 +1277,41 @@ textarea:focus {
   gap: 10px;
   align-items: center;
   color: #4d463f;
+}
+
+.toggle.disabled {
+  color: var(--muted);
+}
+
+.toggle input:disabled {
+  opacity: 0.45;
+}
+
+.color-swatches {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+
+.color-swatches button {
+  height: 34px;
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--swatch) 82%, white), var(--swatch)),
+    var(--swatch);
+  box-shadow:
+    inset 0 0 0 1px rgba(62, 54, 44, 0.1),
+    0 8px 18px color-mix(in srgb, var(--swatch) 24%, transparent);
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+
+.color-swatches button:hover,
+.color-swatches button.active {
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 252, 245, 0.85),
+    0 0 0 2px color-mix(in srgb, var(--swatch) 72%, #2d2924),
+    0 12px 22px color-mix(in srgb, var(--swatch) 28%, transparent);
 }
 
 .web-footer {
