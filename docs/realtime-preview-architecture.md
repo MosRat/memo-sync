@@ -38,6 +38,7 @@ Implemented safeguards:
 - default inline SVG path: main preview uses inline SVG by default because it has the most reliable sizing in WebView2
 - user-selectable render path: `auto`, `typst-inline`, `typst-asset`, and `markdown`
 - user-selectable Typst templates: `literary`, `compact`, and `technical`
+- app-preview Typst scale: templates use narrow preview-oriented page widths and larger text/code sizes instead of document-print proportions
 - legacy SVG IPC fallback: keeps preview available if a platform rejects the asset path
 - cmarker test: ignored by default but manually runnable because package fetch may use network
 

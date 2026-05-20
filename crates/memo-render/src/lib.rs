@@ -8,6 +8,8 @@ use std::{
 use typst::layout::{Abs, PagedDocument};
 use typst_as_lib::TypstEngine;
 
+const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v2";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RenderFormat {
@@ -249,17 +251,18 @@ fn markdown_source(template: RenderTemplate) -> &'static str {
         RenderTemplate::Literary => {
             r##"
 #import "@preview/cmarker:0.1.8"
-#set page(width: 560pt, height: auto, margin: (x: 34pt, y: 30pt))
-#set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Microsoft YaHei", "New Computer Modern"), size: 12pt, lang: "zh")
-#set par(leading: 0.82em, justify: false, spacing: 0.72em)
-#show heading: it => block(above: 0.72em, below: 0.38em, text(weight: 700, fill: rgb("#211f1b"), it))
+#set page(width: 340pt, height: auto, margin: (x: 18pt, y: 20pt))
+#set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Microsoft YaHei", "New Computer Modern"), size: 14.2pt, lang: "zh", fill: rgb("#211f1b"))
+#set par(leading: 0.76em, justify: false, spacing: 0.58em)
+#show heading: it => block(above: 0.62em, below: 0.32em, text(weight: 720, fill: rgb("#171512"), it))
+#show strong: it => text(weight: 730, fill: rgb("#181612"), it)
 #show emph: it => text(style: "italic", fill: rgb("#4b443b"), it)
 #show raw: it => block(
   fill: rgb("#20261f"),
   radius: 5pt,
-  inset: 11pt,
+  inset: 10pt,
   width: 100%,
-  text(font: ("Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.5pt, fill: rgb("#eaf1e4"), it)
+  text(font: ("Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 10.4pt, fill: rgb("#eaf1e4"), it)
 )
 #cmarker.render(read("/memo.md"), raw-typst: false)
 "##
@@ -267,16 +270,17 @@ fn markdown_source(template: RenderTemplate) -> &'static str {
         RenderTemplate::Compact => {
             r##"
 #import "@preview/cmarker:0.1.8"
-#set page(width: 520pt, height: auto, margin: (x: 22pt, y: 20pt))
-#set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 10.6pt, lang: "zh")
-#set par(leading: 0.62em, justify: false, spacing: 0.38em)
-#show heading: it => block(above: 0.44em, below: 0.24em, text(weight: 700, fill: rgb("#24211d"), it))
+#set page(width: 332pt, height: auto, margin: (x: 16pt, y: 16pt))
+#set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 12.8pt, lang: "zh", fill: rgb("#27231f"))
+#set par(leading: 0.58em, justify: false, spacing: 0.32em)
+#show heading: it => block(above: 0.38em, below: 0.18em, text(weight: 720, fill: rgb("#24211d"), it))
+#show strong: it => text(weight: 720, fill: rgb("#181612"), it)
 #show raw: it => block(
   fill: rgb("#20261f"),
   radius: 4pt,
-  inset: 8pt,
+  inset: 8.5pt,
   width: 100%,
-  text(font: ("Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 8.8pt, fill: rgb("#eaf1e4"), it)
+  text(font: ("Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.7pt, fill: rgb("#eaf1e4"), it)
 )
 #cmarker.render(read("/memo.md"), raw-typst: false)
 "##
@@ -284,16 +288,17 @@ fn markdown_source(template: RenderTemplate) -> &'static str {
         RenderTemplate::Technical => {
             r##"
 #import "@preview/cmarker:0.1.8"
-#set page(width: 560pt, height: auto, margin: (x: 28pt, y: 24pt))
-#set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 11pt, lang: "zh")
-#set par(leading: 0.7em, justify: false, spacing: 0.48em)
-#show heading: it => block(above: 0.58em, below: 0.3em, text(weight: 720, fill: rgb("#1e2520"), it))
+#set page(width: 348pt, height: auto, margin: (x: 18pt, y: 18pt))
+#set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 13.2pt, lang: "zh", fill: rgb("#20231f"))
+#set par(leading: 0.64em, justify: false, spacing: 0.4em)
+#show heading: it => block(above: 0.5em, below: 0.24em, text(weight: 740, fill: rgb("#1e2520"), it))
+#show strong: it => text(weight: 730, fill: rgb("#181f1a"), it)
 #show raw: it => block(
   fill: rgb("#18201b"),
   radius: 4pt,
-  inset: 10pt,
+  inset: 9.5pt,
   width: 100%,
-  text(font: ("Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.2pt, fill: rgb("#dfece2"), it)
+  text(font: ("Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 10.2pt, fill: rgb("#dfece2"), it)
 )
 #cmarker.render(read("/memo.md"), raw-typst: false)
 "##
@@ -304,25 +309,25 @@ fn markdown_source(template: RenderTemplate) -> &'static str {
 fn typst_source(body: &str, template: RenderTemplate) -> String {
     let prelude = match template {
         RenderTemplate::Literary => {
-            r#"
-#set page(width: 560pt, height: auto, margin: (x: 34pt, y: 30pt))
-#set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Microsoft YaHei", "New Computer Modern"), size: 12pt, lang: "zh")
-#set par(leading: 0.82em, justify: false, spacing: 0.72em)
-"#
+            r##"
+#set page(width: 340pt, height: auto, margin: (x: 18pt, y: 20pt))
+#set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Microsoft YaHei", "New Computer Modern"), size: 14.2pt, lang: "zh", fill: rgb("#211f1b"))
+#set par(leading: 0.76em, justify: false, spacing: 0.58em)
+"##
         }
         RenderTemplate::Compact => {
-            r#"
-#set page(width: 520pt, height: auto, margin: (x: 22pt, y: 20pt))
-#set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 10.6pt, lang: "zh")
-#set par(leading: 0.62em, justify: false, spacing: 0.38em)
-"#
+            r##"
+#set page(width: 332pt, height: auto, margin: (x: 16pt, y: 16pt))
+#set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 12.8pt, lang: "zh", fill: rgb("#27231f"))
+#set par(leading: 0.58em, justify: false, spacing: 0.32em)
+"##
         }
         RenderTemplate::Technical => {
-            r#"
-#set page(width: 560pt, height: auto, margin: (x: 28pt, y: 24pt))
-#set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 11pt, lang: "zh")
-#set par(leading: 0.7em, justify: false, spacing: 0.48em)
-"#
+            r##"
+#set page(width: 348pt, height: auto, margin: (x: 18pt, y: 18pt))
+#set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 13.2pt, lang: "zh", fill: rgb("#20231f"))
+#set par(leading: 0.64em, justify: false, spacing: 0.4em)
+"##
         }
     };
     format!(
@@ -335,6 +340,7 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
 
 fn cache_key(body: &str, format: RenderFormat, template: RenderTemplate) -> String {
     let mut hasher = Sha256::new();
+    hasher.update(RENDER_TEMPLATE_VERSION);
     hasher.update(match format {
         RenderFormat::Markdown => b"markdown".as_slice(),
         RenderFormat::Typst => b"typst".as_slice(),

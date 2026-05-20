@@ -1034,6 +1034,7 @@ textarea:focus {
 
 .typst-preview svg {
   display: block;
+  width: 100%;
   max-width: 100%;
   height: auto;
   margin: 0 auto;
@@ -1058,6 +1059,12 @@ textarea:focus {
   background: #fffdf8;
   object-fit: contain;
   box-shadow: 0 16px 38px rgba(44, 37, 30, 0.08);
+}
+
+.typst-preview-asset svg {
+  width: 100%;
+  max-width: none;
+  box-shadow: none;
 }
 
 .markdown h1,
