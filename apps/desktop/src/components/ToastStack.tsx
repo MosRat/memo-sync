@@ -7,6 +7,8 @@ export interface ToastMessage {
   kind: ToastKind;
   title: string;
   detail?: string;
+  actionLabel?: string;
+  action?: () => void | Promise<void>;
 }
 
 function ToastStackView({ toasts, onDismiss }: { toasts: ToastMessage[]; onDismiss: (id: number) => void }) {
@@ -14,10 +16,23 @@ function ToastStackView({ toasts, onDismiss }: { toasts: ToastMessage[]; onDismi
   return (
     <div className="toast-stack" role="status" aria-live="polite">
       {toasts.map((toast) => (
-        <button key={toast.id} className={`toast ${toast.kind}`} onClick={() => onDismiss(toast.id)}>
-          <strong>{toast.title}</strong>
-          {toast.detail && <span>{toast.detail}</span>}
-        </button>
+        <div key={toast.id} className={`toast ${toast.kind}`}>
+          <button className="toast-body" onClick={() => onDismiss(toast.id)}>
+            <strong>{toast.title}</strong>
+            {toast.detail && <span>{toast.detail}</span>}
+          </button>
+          {toast.action && toast.actionLabel && (
+            <button
+              className="toast-action"
+              onClick={() => {
+                onDismiss(toast.id);
+                void toast.action?.();
+              }}
+            >
+              {toast.actionLabel}
+            </button>
+          )}
+        </div>
       ))}
     </div>
   );

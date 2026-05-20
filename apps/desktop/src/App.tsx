@@ -262,13 +262,13 @@ function WorkbenchApp() {
   const captureRepoId = activeRepo !== "all" ? activeRepo : quickRepo || repositories[0]?.id || "";
   const activeMemoStats = useMemo(() => textStatsLabel(activeMemo?.body_md ?? ""), [activeMemo?.body_md]);
 
-  const notify = useCallback((kind: ToastKind, title: string, detail?: string) => {
+  const notify = useCallback((kind: ToastKind, title: string, detail?: string, action?: Pick<ToastMessage, "actionLabel" | "action">) => {
     const id = toastIdRef.current + 1;
     toastIdRef.current = id;
-    setToasts((items) => [...items.slice(-3), { id, kind, title, detail }]);
+    setToasts((items) => [...items.slice(-3), { id, kind, title, detail, ...action }]);
     window.setTimeout(() => {
       setToasts((items) => items.filter((item) => item.id !== id));
-    }, kind === "error" ? 5200 : 3200);
+    }, action?.action ? 8200 : kind === "error" ? 5200 : 3200);
   }, []);
 
   const selectMemoByOffset = useCallback(
@@ -385,6 +385,24 @@ function WorkbenchApp() {
         setViewFilter("active");
       },
     },
+    ...(activeMemo
+      ? [
+          {
+            id: "archive-current",
+            title: activeMemo.archived ? "Restore current memo" : "Archive current memo",
+            category: "Action",
+            detail: activeMemo.title,
+            run: () => handleArchiveToggle(activeMemo),
+          },
+          {
+            id: "delete-current",
+            title: "Delete current memo",
+            category: "Action",
+            detail: activeMemo.title,
+            run: () => handleDelete(activeMemo.id),
+          },
+        ]
+      : []),
     ...viewFilters.map((item) => ({
       id: `view-${item.id}`,
       title: item.label,
@@ -657,10 +675,39 @@ function WorkbenchApp() {
 
   async function handleDelete(id: string) {
     await flushPendingSave();
+    const deleted = memos.find((memo) => memo.id === id);
     await deleteMemo(id);
     setMemos((items) => items.filter((item) => item.id !== id));
     setActiveMemoId(null);
-    notify("warning", "Memo deleted");
+    notify(
+      "warning",
+      "Memo deleted",
+      deleted?.title,
+      deleted
+        ? {
+            actionLabel: "Undo",
+            action: async () => {
+              const restored = await saveMemo(memoInputFrom(deleted));
+              replaceMemo(restored);
+              notify("success", "Memo restored", restored.title);
+            },
+          }
+        : undefined,
+    );
+  }
+
+  async function handleArchiveToggle(memo: Memo) {
+    const archived = !memo.archived;
+    const saved = await saveMemo(memoInputFrom(memo, { archived }));
+    replaceMemo(saved);
+    notify(archived ? "info" : "success", archived ? "Memo archived" : "Memo restored", memo.title, {
+      actionLabel: "Undo",
+      action: async () => {
+        const restored = await saveMemo(memoInputFrom(memo));
+        replaceMemo(restored);
+        notify("success", "Archive undone", restored.title);
+      },
+    });
   }
 
   async function handleClipboardCapture(repositoryId: string) {
@@ -933,7 +980,7 @@ function WorkbenchApp() {
                   <button className="icon-button" title="Split" onClick={() => setMode("split")}>
                     <Code2 size={17} />
                   </button>
-                  <button className={activeMemo.archived ? "icon-button active" : "icon-button"} title="Archive" onClick={() => handleSave({ archived: !activeMemo.archived })}>
+                  <button className={activeMemo.archived ? "icon-button active" : "icon-button"} title="Archive" onClick={() => handleArchiveToggle(activeMemo)}>
                     <Archive size={17} />
                   </button>
                   <button className="icon-button danger" title="Delete" onClick={() => handleDelete(activeMemo.id)}>
