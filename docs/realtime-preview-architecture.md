@@ -30,6 +30,7 @@ Implemented safeguards:
 - Rust LRU cache: 96 entries, 24 MiB max SVG bytes
 - cache key: `format + body`
 - cache key includes the Typst preview template, so visual presets do not collide
+- Markdown is normalized locally in Rust before Typst compilation, including unfinished code fences, headings, lists, block quotes, and horizontal rules
 - custom `memo-preview://` protocol: SVG is loaded as a WebView resource instead of being serialized through JSON IPC
 - page asset protocol: pages can be loaded independently through `memo-preview://localhost/page/<cacheKey>/<page>.svg`
 - Windows URL mapping: WebView2 resolves the protocol through `http://memo-preview.localhost/...`
@@ -40,7 +41,6 @@ Implemented safeguards:
 - user-selectable Typst templates: `literary`, `compact`, and `technical`
 - app-preview Typst scale: templates use narrow preview-oriented page widths and larger text/code sizes instead of document-print proportions
 - legacy SVG IPC fallback: keeps preview available if a platform rejects the asset path
-- cmarker test: ignored by default but manually runnable because package fetch may use network
 
 ## Next Architecture
 

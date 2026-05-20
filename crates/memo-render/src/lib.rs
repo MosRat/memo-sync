@@ -82,15 +82,15 @@ pub struct RenderPageMetadata {
 pub fn render_memo(input: RenderMemoInput) -> anyhow::Result<RenderMemoOutput> {
     let cache_key = render_cache_key(&input);
     let started = Instant::now();
-    let source = match input.format {
-        RenderFormat::Markdown => markdown_source(input.template).to_string(),
-        RenderFormat::Typst => typst_source(&input.body, input.template),
+    let (source, diagnostics) = match input.format {
+        RenderFormat::Markdown => {
+            let (typst_body, diagnostics) = markdown_to_typst(&input.body);
+            (typst_source(&typst_body, input.template), diagnostics)
+        }
+        RenderFormat::Typst => (typst_source(&input.body, input.template), Vec::new()),
     };
-    let mut builder =
+    let builder =
         TypstEngine::builder().with_static_source_file_resolver([("main.typ", source.as_str())]);
-    if matches!(input.format, RenderFormat::Markdown) {
-        builder = builder.with_static_file_resolver([("memo.md", input.body.as_bytes())]);
-    }
     let engine = builder.with_package_file_resolver().build();
     let document: PagedDocument = engine
         .compile("main.typ")
@@ -120,7 +120,7 @@ pub fn render_memo(input: RenderMemoInput) -> anyhow::Result<RenderMemoOutput> {
     let height_pt = pages.iter().map(|page| page.height_pt).sum();
     Ok(RenderMemoOutput {
         svg,
-        diagnostics: Vec::new(),
+        diagnostics,
         elapsed_ms: started.elapsed().as_millis(),
         cache_key,
         cached: false,
@@ -246,66 +246,6 @@ fn move_to_back(order: &mut VecDeque<String>, key: &str) {
     order.push_back(key.to_string());
 }
 
-fn markdown_source(template: RenderTemplate) -> &'static str {
-    match template {
-        RenderTemplate::Literary => {
-            r##"
-#import "@preview/cmarker:0.1.8"
-#set page(width: 340pt, height: auto, margin: (x: 18pt, y: 20pt))
-#set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Microsoft YaHei", "New Computer Modern"), size: 14.2pt, lang: "zh", fill: rgb("#211f1b"))
-#set par(leading: 0.76em, justify: false, spacing: 0.58em)
-#show heading: it => block(above: 0.62em, below: 0.32em, text(weight: 720, fill: rgb("#171512"), it))
-#show strong: it => text(weight: 730, fill: rgb("#181612"), it)
-#show emph: it => text(style: "italic", fill: rgb("#4b443b"), it)
-#show raw: it => block(
-  fill: rgb("#20261f"),
-  radius: 5pt,
-  inset: 10pt,
-  width: 100%,
-  text(font: ("Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 10.4pt, fill: rgb("#eaf1e4"), it)
-)
-#cmarker.render(read("/memo.md"), raw-typst: false)
-"##
-        }
-        RenderTemplate::Compact => {
-            r##"
-#import "@preview/cmarker:0.1.8"
-#set page(width: 332pt, height: auto, margin: (x: 16pt, y: 16pt))
-#set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 12.8pt, lang: "zh", fill: rgb("#27231f"))
-#set par(leading: 0.58em, justify: false, spacing: 0.32em)
-#show heading: it => block(above: 0.38em, below: 0.18em, text(weight: 720, fill: rgb("#24211d"), it))
-#show strong: it => text(weight: 720, fill: rgb("#181612"), it)
-#show raw: it => block(
-  fill: rgb("#20261f"),
-  radius: 4pt,
-  inset: 8.5pt,
-  width: 100%,
-  text(font: ("Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.7pt, fill: rgb("#eaf1e4"), it)
-)
-#cmarker.render(read("/memo.md"), raw-typst: false)
-"##
-        }
-        RenderTemplate::Technical => {
-            r##"
-#import "@preview/cmarker:0.1.8"
-#set page(width: 348pt, height: auto, margin: (x: 18pt, y: 18pt))
-#set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 13.2pt, lang: "zh", fill: rgb("#20231f"))
-#set par(leading: 0.64em, justify: false, spacing: 0.4em)
-#show heading: it => block(above: 0.5em, below: 0.24em, text(weight: 740, fill: rgb("#1e2520"), it))
-#show strong: it => text(weight: 730, fill: rgb("#181f1a"), it)
-#show raw: it => block(
-  fill: rgb("#18201b"),
-  radius: 4pt,
-  inset: 9.5pt,
-  width: 100%,
-  text(font: ("Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 10.2pt, fill: rgb("#dfece2"), it)
-)
-#cmarker.render(read("/memo.md"), raw-typst: false)
-"##
-        }
-    }
-}
-
 fn typst_source(body: &str, template: RenderTemplate) -> String {
     let prelude = match template {
         RenderTemplate::Literary => {
@@ -313,6 +253,14 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
 #set page(width: 340pt, height: auto, margin: (x: 18pt, y: 20pt))
 #set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Microsoft YaHei", "New Computer Modern"), size: 14.2pt, lang: "zh", fill: rgb("#211f1b"))
 #set par(leading: 0.76em, justify: false, spacing: 0.58em)
+#show heading: it => block(above: 0.62em, below: 0.32em, text(weight: 720, fill: rgb("#171512"), it))
+#show raw: it => block(
+  fill: rgb("#20261f"),
+  radius: 5pt,
+  inset: 10pt,
+  width: 100%,
+  text(font: ("Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 10.4pt, fill: rgb("#eaf1e4"), it)
+)
 "##
         }
         RenderTemplate::Compact => {
@@ -320,6 +268,14 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
 #set page(width: 332pt, height: auto, margin: (x: 16pt, y: 16pt))
 #set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 12.8pt, lang: "zh", fill: rgb("#27231f"))
 #set par(leading: 0.58em, justify: false, spacing: 0.32em)
+#show heading: it => block(above: 0.38em, below: 0.18em, text(weight: 720, fill: rgb("#24211d"), it))
+#show raw: it => block(
+  fill: rgb("#20261f"),
+  radius: 4pt,
+  inset: 8.5pt,
+  width: 100%,
+  text(font: ("Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.7pt, fill: rgb("#eaf1e4"), it)
+)
 "##
         }
         RenderTemplate::Technical => {
@@ -327,6 +283,14 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
 #set page(width: 348pt, height: auto, margin: (x: 18pt, y: 18pt))
 #set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 13.2pt, lang: "zh", fill: rgb("#20231f"))
 #set par(leading: 0.64em, justify: false, spacing: 0.4em)
+#show heading: it => block(above: 0.5em, below: 0.24em, text(weight: 740, fill: rgb("#1e2520"), it))
+#show raw: it => block(
+  fill: rgb("#18201b"),
+  radius: 4pt,
+  inset: 9.5pt,
+  width: 100%,
+  text(font: ("Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 10.2pt, fill: rgb("#dfece2"), it)
+)
 "##
         }
     };
@@ -336,6 +300,152 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
 "#,
         body
     )
+}
+
+fn markdown_to_typst(markdown: &str) -> (String, Vec<String>) {
+    let mut out = String::new();
+    let mut diagnostics = Vec::new();
+    let mut in_fence: Option<String> = None;
+
+    for line in markdown.lines() {
+        let trimmed = line.trim();
+        if let Some(fence) = &in_fence {
+            if trimmed.starts_with(fence) {
+                out.push_str("```\n\n");
+                in_fence = None;
+            } else {
+                out.push_str(line);
+                out.push('\n');
+            }
+            continue;
+        }
+
+        if let Some(language) = trimmed.strip_prefix("```") {
+            out.push_str("```");
+            out.push_str(language.trim());
+            out.push('\n');
+            in_fence = Some("```".to_string());
+            continue;
+        }
+        if let Some(language) = trimmed.strip_prefix("~~~") {
+            out.push_str("```");
+            out.push_str(language.trim());
+            out.push('\n');
+            in_fence = Some("~~~".to_string());
+            continue;
+        }
+
+        if trimmed.is_empty() {
+            out.push('\n');
+            continue;
+        }
+
+        if trimmed.chars().all(|ch| ch == '-') && trimmed.len() >= 3 {
+            out.push_str("#line(length: 100%, stroke: 0.7pt + rgb(\"#d5cab8\"))\n\n");
+            continue;
+        }
+
+        if let Some((level, text)) = markdown_heading(trimmed) {
+            out.push_str(&"=".repeat(level));
+            out.push(' ');
+            out.push_str(&inline_markdown_to_typst(text.trim()));
+            out.push_str("\n\n");
+            continue;
+        }
+
+        if let Some(item) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+        {
+            out.push_str("- ");
+            out.push_str(&inline_markdown_to_typst(item));
+            out.push('\n');
+            continue;
+        }
+
+        if let Some(quote) = trimmed.strip_prefix("> ") {
+            out.push_str("#block(inset: (left: 8pt), stroke: (left: 1pt + rgb(\"#d5cab8\")))[");
+            out.push_str(&inline_markdown_to_typst(quote));
+            out.push_str("]\n\n");
+            continue;
+        }
+
+        out.push_str(&inline_markdown_to_typst(line.trim_end()));
+        out.push_str("\n\n");
+    }
+
+    if in_fence.is_some() {
+        out.push_str("```\n");
+        diagnostics.push("Closed an unfinished Markdown code fence for preview.".to_string());
+    }
+
+    (out, diagnostics)
+}
+
+fn markdown_heading(line: &str) -> Option<(usize, &str)> {
+    let level = line.chars().take_while(|ch| *ch == '#').count();
+    if level == 0 || level > 6 {
+        return None;
+    }
+    let rest = &line[level..];
+    if !rest.starts_with(' ') {
+        return None;
+    }
+    Some((level, rest))
+}
+
+fn inline_markdown_to_typst(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        if let Some(after) = rest.strip_prefix('`') {
+            if let Some(end) = after.find('`') {
+                out.push_str("#raw(\"");
+                out.push_str(&escape_typst_string(&after[..end]));
+                out.push_str("\")");
+                rest = &after[end + 1..];
+                continue;
+            }
+        }
+        if let Some(after) = rest.strip_prefix("**") {
+            if let Some(end) = after.find("**") {
+                out.push('*');
+                out.push_str(&escape_typst_text(&after[..end]));
+                out.push('*');
+                rest = &after[end + 2..];
+                continue;
+            }
+        }
+
+        let Some(ch) = rest.chars().next() else {
+            break;
+        };
+        escape_typst_char(ch, &mut out);
+        rest = &rest[ch.len_utf8()..];
+    }
+    out
+}
+
+fn escape_typst_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        escape_typst_char(ch, &mut out);
+    }
+    out
+}
+
+fn escape_typst_char(ch: char, out: &mut String) {
+    match ch {
+        '\\' | '#' | '*' | '_' | '`' | '$' | '[' | ']' | '<' | '>' | '=' | '+' | '-' => {
+            out.push('\\');
+            out.push(ch);
+        }
+        _ => out.push(ch),
+    }
+}
+
+fn escape_typst_string(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn cache_key(body: &str, format: RenderFormat, template: RenderTemplate) -> String {
@@ -440,8 +550,38 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "downloads the cmarker Typst package on first run"]
-    fn markdown_cmarker_smoke_renders_svg() {
+    fn markdown_converter_closes_code_fences_and_keeps_headings() {
+        let (typst, diagnostics) = markdown_to_typst(
+            "# 一、测试\n## 1.测试\n### 测试\n---\n```rust\nfn main() {\n  println!(\"Hello World!\");\n}",
+        );
+
+        assert!(typst.contains("= 一、测试"));
+        assert!(typst.contains("== 1.测试"));
+        assert!(typst.contains("=== 测试"));
+        assert!(typst.contains("#line(length: 100%"));
+        assert!(typst.ends_with("```\n"));
+        assert_eq!(diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn markdown_sample_renders_more_than_code_block() {
+        let output = render_memo(RenderMemoInput {
+            body: "# 一、测试\n## 1.测试\n### 测试\n---\n```rust\nfn main() {\n  println!(\"Hello World!\");\n}".to_string(),
+            format: RenderFormat::Markdown,
+            template: RenderTemplate::Literary,
+        })
+        .unwrap();
+
+        assert!(
+            output.height_pt > 100.0,
+            "expected heading and code layout, got {}pt",
+            output.height_pt
+        );
+        assert!(!output.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn markdown_smoke_renders_svg() {
         let output = render_memo(RenderMemoInput {
             body: "# Hello\n\nUse **Markdown**.".to_string(),
             format: RenderFormat::Markdown,
