@@ -1,0 +1,9 @@
+{
+  "name": "memo-sync-workspace",
+  "private": true,
+  "scripts": {
+    "test": "cargo test --workspace && pnpm --dir apps/desktop test",
+    "server": "cargo run -p memo-server --",
+    "desktop": "pnpm --dir apps/desktop tauri dev"
+  }
+}

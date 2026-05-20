@@ -1,0 +1,66 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Memo Sync",
+  "version": "0.1.0",
+  "identifier": "app.memo-sync.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm --dir apps/desktop dev",
+    "beforeBuildCommand": "pnpm --dir apps/desktop build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Memo Sync",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 980,
+        "minHeight": 660,
+        "decorations": false,
+        "transparent": false,
+        "center": true
+      },
+      {
+        "label": "quick-capture",
+        "title": "Quick Capture",
+        "url": "index.html",
+        "width": 680,
+        "height": 440,
+        "minWidth": 480,
+        "minHeight": 340,
+        "decorations": false,
+        "resizable": true,
+        "alwaysOnTop": true,
+        "visible": false,
+        "center": true
+      },
+      {
+        "label": "settings",
+        "title": "Memo Sync Settings",
+        "url": "index.html",
+        "width": 760,
+        "height": 620,
+        "minWidth": 660,
+        "minHeight": 540,
+        "decorations": false,
+        "resizable": true,
+        "visible": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.ico"],
+    "category": "Productivity",
+    "shortDescription": "Local-first synchronized memo app",
+    "longDescription": "A multi-platform memo app with markdown, repositories, tags, quick capture, tray controls, and a Rust sync server."
+  }
+}

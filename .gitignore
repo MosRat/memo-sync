@@ -1,0 +1,29 @@
+/target/
+/**/target/
+**/node_modules/
+**/dist/
+**/.tauri/
+**/.vite/
+**/.turbo/
+**/.cache/
+
+# local runtime data
+*.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+
+# generated installers stay reproducible from source
+**/bundle/

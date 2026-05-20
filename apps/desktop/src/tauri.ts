@@ -1,0 +1,213 @@
+import { invoke } from "@tauri-apps/api/core";
+import { emit, listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { AppSettings, Bootstrap, Memo, Repository, SaveMemoInput, ShortcutCheckResult } from "./types";
+
+const isTauri = "__TAURI_INTERNALS__" in window;
+export const isDesktopApp = isTauri;
+
+export function currentWindowLabel() {
+  if (!isTauri) return "web";
+  try {
+    return getCurrentWindow().label;
+  } catch {
+    return "main";
+  }
+}
+
+const defaultSettings: AppSettings = {
+  server_url: "http://127.0.0.1:7373",
+  quick_capture_shortcut: "Ctrl+Shift+KeyM",
+  clipboard_capture_shortcut: "Ctrl+Shift+Alt+KeyV",
+  settings_shortcut: "Ctrl+Shift+KeyS",
+  writing_mode: "split",
+  compact_sidebar_on_start: false,
+};
+
+const demoRepo: Repository = {
+  id: "demo-repo",
+  name: "Inbox",
+  kind: "Persistent",
+  sync_enabled: true,
+  color: "#c86f52",
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+};
+
+let demoMemos: Memo[] = [
+  {
+    id: "demo-memo",
+    repository_id: demoRepo.id,
+    title: "晨间札记 / Morning Note",
+    body_md:
+      "把散落在剪贴板、会议和代码里的句子，收进一个可以同步的地方。\n\nUse **Markdown**, tags, repositories, quick capture, and background sync.\n\n```ts\nconst note = {\n  mood: 'quiet craft',\n  sync: 'local first',\n};\n```",
+    tags: ["welcome", "markdown", "中文"],
+    pinned: true,
+    archived: false,
+    deleted: false,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    source: "Manual",
+    meta: { byte_len: 120 },
+  },
+];
+
+export async function bootstrap(): Promise<Bootstrap> {
+  if (isTauri) return invoke("bootstrap");
+  return {
+    repositories: [demoRepo],
+    memos: demoMemos,
+    device_id: "web-preview",
+    settings: getWebSettings(),
+  };
+}
+
+export async function getAppSettings(): Promise<AppSettings> {
+  if (isTauri) return invoke("get_app_settings");
+  return getWebSettings();
+}
+
+export async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
+  if (isTauri) return invoke("update_app_settings", { settings });
+  localStorage.setItem("memo-sync-settings", JSON.stringify(settings));
+  return settings;
+}
+
+export async function checkShortcuts(
+  quickCaptureShortcut: string,
+  clipboardCaptureShortcut: string,
+  settingsShortcut: string,
+): Promise<ShortcutCheckResult> {
+  if (isTauri) {
+    return invoke("check_shortcuts", {
+      request: {
+        quick_capture_shortcut: quickCaptureShortcut,
+        clipboard_capture_shortcut: clipboardCaptureShortcut,
+        settings_shortcut: settingsShortcut,
+      },
+    });
+  }
+  if (new Set([quickCaptureShortcut, clipboardCaptureShortcut, settingsShortcut]).size !== 3) {
+    return {
+      ok: false,
+      quick_available: false,
+      clipboard_available: false,
+      settings_available: false,
+      message: "Shortcuts must be different",
+    };
+  }
+  return {
+    ok: true,
+    quick_available: true,
+    clipboard_available: true,
+    settings_available: true,
+    message: "Looks available in web preview",
+  };
+}
+
+export async function createRepository(name: string, temporary: boolean, color: string): Promise<Repository> {
+  if (isTauri) return invoke("create_repository", { name, temporary, color });
+  return {
+    id: crypto.randomUUID(),
+    name,
+    kind: temporary ? "Temporary" : "Persistent",
+    sync_enabled: !temporary,
+    color,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export async function saveMemo(input: SaveMemoInput): Promise<Memo> {
+  if (isTauri) return invoke("save_memo", { input });
+  return saveMemoFallback(input, "Manual");
+}
+
+export async function saveQuickMemo(input: SaveMemoInput): Promise<Memo> {
+  if (isTauri) return invoke("save_quick_memo", { input });
+  return saveMemoFallback(input, "QuickCapture");
+}
+
+function saveMemoFallback(input: SaveMemoInput, source: Memo["source"]): Memo {
+  const memo: Memo = {
+    id: input.id ?? crypto.randomUUID(),
+    repository_id: input.repository_id,
+    title: input.title || "Untitled memo",
+    body_md: input.body_md,
+    tags: input.tags,
+    pinned: input.pinned,
+    archived: input.archived,
+    deleted: false,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    source,
+    meta: { byte_len: input.body_md.length },
+  };
+  demoMemos = [memo, ...demoMemos.filter((item) => item.id !== memo.id)];
+  return memo;
+}
+
+export async function deleteMemo(id: string): Promise<void> {
+  if (isTauri) return invoke("delete_memo", { id });
+  demoMemos = demoMemos.filter((item) => item.id !== id);
+}
+
+export async function captureClipboardMemo(repositoryId: string): Promise<Memo> {
+  if (isTauri) return invoke("capture_clipboard_memo", { repositoryId });
+  const text = await navigator.clipboard.readText();
+  return saveMemo({
+    repository_id: repositoryId,
+    title: "Clipboard capture",
+    body_md: text,
+    tags: ["clipboard"],
+    pinned: false,
+    archived: false,
+  });
+}
+
+export async function readClipboardText(): Promise<string> {
+  if (isTauri) return invoke("read_clipboard_text");
+  return navigator.clipboard.readText();
+}
+
+export async function syncNow(serverUrl: string): Promise<{ pushed: number; pulled: number; server_sequence: number }> {
+  if (isTauri) return invoke("sync_now", { serverUrl });
+  return { pushed: 0, pulled: 0, server_sequence: 0 };
+}
+
+export async function windowAction(action: "window_minimize" | "window_toggle_maximize" | "window_close") {
+  if (isTauri) return invoke(action);
+}
+
+export function listenCurrentWindowFocus(handler: (focused: boolean) => void) {
+  if (!isTauri) return Promise.resolve(() => {});
+  return getCurrentWindow().onFocusChanged((event) => handler(event.payload));
+}
+
+export async function showQuickCaptureWindow() {
+  if (isTauri) return invoke("show_quick_capture");
+}
+
+export async function showSettingsWindow() {
+  if (isTauri) return invoke("show_settings_window");
+}
+
+export function emitAppEvent<T>(name: string, payload: T) {
+  if (!isTauri) return Promise.resolve();
+  return emit(name, payload);
+}
+
+export function listenAppEvent<T = unknown>(name: string, handler: (payload: T) => void) {
+  if (!isTauri) return Promise.resolve(() => {});
+  return listen<T>(name, (event) => handler(event.payload));
+}
+
+function getWebSettings(): AppSettings {
+  const stored = localStorage.getItem("memo-sync-settings");
+  if (!stored) return defaultSettings;
+  try {
+    return { ...defaultSettings, ...JSON.parse(stored) };
+  } catch {
+    return defaultSettings;
+  }
+}
