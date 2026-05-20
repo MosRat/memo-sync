@@ -552,6 +552,56 @@ textarea:focus {
   text-overflow: ellipsis;
 }
 
+.batch-bar {
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(96px, 136px) auto auto;
+  align-items: center;
+  gap: 6px;
+  padding: 5px;
+  border-radius: 9px;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.82), rgba(244, 239, 229, 0.78)),
+    var(--paper);
+  box-shadow:
+    inset 0 0 0 1px rgba(62, 54, 44, 0.1),
+    0 10px 26px rgba(39, 34, 27, 0.08);
+  animation: palette-in 150ms ease both;
+}
+
+.batch-bar strong {
+  min-width: 0;
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.batch-bar button,
+.batch-bar select {
+  height: 30px;
+  border-radius: 7px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.batch-bar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: rgba(255, 252, 245, 0.62);
+  color: var(--ink-soft);
+  box-shadow: inset 0 0 0 1px rgba(62, 54, 44, 0.08);
+}
+
+.batch-bar .danger-soft {
+  color: #9a4f45;
+  background: rgba(185, 104, 77, 0.1);
+}
+
 .memo-list {
   min-height: 0;
   flex: 1;
@@ -571,7 +621,7 @@ textarea:focus {
   right: 2px;
   height: 116px;
   border-radius: 8px;
-  padding: 14px;
+  padding: 14px 14px 14px 42px;
   background: rgba(255, 252, 245, 0.48);
   color: var(--ink);
   text-align: left;
@@ -586,10 +636,34 @@ textarea:focus {
   background: rgba(255, 252, 245, 0.66);
 }
 
+.memo-row.selected {
+  border-color: rgba(112, 139, 118, 0.34);
+  background: rgba(255, 252, 245, 0.82);
+}
+
 .memo-row.active {
   border-color: rgba(185, 104, 77, 0.32);
   background: rgba(255, 252, 245, 0.9);
   box-shadow: 0 14px 34px rgba(51, 43, 35, 0.08);
+}
+
+.memo-row-check {
+  position: absolute;
+  top: 17px;
+  left: 14px;
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  background: rgba(255, 252, 245, 0.7);
+  box-shadow: inset 0 0 0 1px rgba(62, 54, 44, 0.18);
+  transition: background 140ms ease, box-shadow 140ms ease;
+}
+
+.memo-row-check[aria-checked="true"] {
+  background: var(--sage);
+  box-shadow:
+    inset 0 0 0 4px var(--sage),
+    inset 0 0 0 6px rgba(255, 252, 245, 0.92);
 }
 
 .memo-row strong {

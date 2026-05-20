@@ -7,11 +7,15 @@ const overscan = 4;
 function MemoListView({
   memos,
   activeMemoId,
+  selectedIds,
   onSelect,
+  onToggleSelected,
 }: {
   memos: Memo[];
   activeMemoId: string | null;
+  selectedIds: Set<string>;
   onSelect: (id: string) => void;
+  onToggleSelected: (id: string) => void;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState({ top: 0, height: 0 });
@@ -69,10 +73,26 @@ function MemoListView({
           return (
             <button
               key={item.id}
-              className={activeMemoId === item.id ? "memo-row active" : "memo-row"}
+              className={`${activeMemoId === item.id ? "memo-row active" : "memo-row"} ${selectedIds.has(item.id) ? "selected" : ""}`}
               style={{ transform: `translateY(${absoluteIndex * rowHeight}px)` }}
               onClick={() => onSelect(item.id)}
             >
+              <span
+                role="checkbox"
+                aria-checked={selectedIds.has(item.id)}
+                tabIndex={0}
+                className="memo-row-check"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onToggleSelected(item.id);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== " " && event.key !== "Enter") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onToggleSelected(item.id);
+                }}
+              />
               <div>
                 <strong>{item.title}</strong>
                 <p>{item.body_md.replace(/[#*_`]/g, "").slice(0, 110) || "Empty memo"}</p>

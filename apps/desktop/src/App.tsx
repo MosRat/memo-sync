@@ -125,6 +125,7 @@ function WorkbenchApp() {
   const [quickRepo, setQuickRepo] = useState<string>("");
   const [newRepoOpen, setNewRepoOpen] = useState(false);
   const [editingRepo, setEditingRepo] = useState<Repository | null>(null);
+  const [selectedMemoIds, setSelectedMemoIds] = useState<Set<string>>(new Set());
   const [serverUrl, setServerUrl] = useState("http://127.0.0.1:7373");
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [syncText, setSyncText] = useState("Idle");
@@ -261,7 +262,17 @@ function WorkbenchApp() {
   const activeRepoName = activeRepo === "all" ? "All notes" : repositories.find((repo) => repo.id === activeRepo)?.name ?? "Repository";
   const activeViewLabel = viewFilters.find((item) => item.id === viewFilter)?.label ?? "Inbox";
   const captureRepoId = activeRepo !== "all" ? activeRepo : quickRepo || repositories[0]?.id || "";
+  const selectedMemos = useMemo(() => visibleMemos.filter((memo) => selectedMemoIds.has(memo.id)), [selectedMemoIds, visibleMemos]);
   const activeMemoStats = useMemo(() => textStatsLabel(activeMemo?.body_md ?? ""), [activeMemo?.body_md]);
+
+  useEffect(() => {
+    setSelectedMemoIds((current) => {
+      if (!current.size) return current;
+      const visibleIds = new Set(visibleMemos.map((memo) => memo.id));
+      const next = new Set([...current].filter((id) => visibleIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [visibleMemos]);
 
   const notify = useCallback((kind: ToastKind, title: string, detail?: string, action?: Pick<ToastMessage, "actionLabel" | "action">) => {
     const id = toastIdRef.current + 1;
@@ -422,6 +433,31 @@ function WorkbenchApp() {
             run: () => handleMoveMemo(activeMemo, repo.id),
           }))
       : []),
+    ...(selectedMemos.length
+      ? [
+          {
+            id: "archive-selected",
+            title: "Archive selected memos",
+            category: "Batch",
+            detail: `${selectedMemos.length} selected`,
+            run: () => handleBatchArchive(),
+          },
+          {
+            id: "delete-selected",
+            title: "Delete selected memos",
+            category: "Batch",
+            detail: `${selectedMemos.length} selected`,
+            run: () => handleBatchDelete(),
+          },
+          {
+            id: "clear-selection",
+            title: "Clear selection",
+            category: "Batch",
+            detail: `${selectedMemos.length} selected`,
+            run: () => setSelectedMemoIds(new Set()),
+          },
+        ]
+      : []),
     ...viewFilters.map((item) => ({
       id: `view-${item.id}`,
       title: item.label,
@@ -539,6 +575,18 @@ function WorkbenchApp() {
     setMemos((items) => [saved, ...items.filter((item) => item.id !== saved.id)]);
     setAllTags((items) => [...new Set([...items, ...saved.tags])].sort());
     setActiveMemoId(saved.id);
+  }
+
+  function toggleMemoSelected(id: string) {
+    setSelectedMemoIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
   }
 
   async function flushPendingSave() {
@@ -727,6 +775,80 @@ function WorkbenchApp() {
         const restored = await saveMemo(memoInputFrom(saved, { repository_id: memo.repository_id }));
         replaceMemo(restored);
         setActiveRepo(memo.repository_id);
+      },
+    });
+  }
+
+  async function handleBatchArchive() {
+    if (!selectedMemos.length) return;
+    await flushPendingSave();
+    const originals = selectedMemos;
+    const saved: Memo[] = [];
+    for (const memo of originals) {
+      saved.push(await saveMemo(memoInputFrom(memo, { archived: true })));
+    }
+    setMemos((items) => [...saved, ...items.filter((item) => !saved.some((memo) => memo.id === item.id))]);
+    setSelectedMemoIds(new Set());
+    setActiveMemoId((current) => (current && saved.some((memo) => memo.id === current) ? visibleMemos.find((memo) => !selectedMemoIds.has(memo.id))?.id ?? null : current));
+    notify("info", "Memos archived", `${saved.length} selected`, {
+      actionLabel: "Undo",
+      action: async () => {
+        const restored: Memo[] = [];
+        for (const memo of originals) {
+          restored.push(await saveMemo(memoInputFrom(memo)));
+        }
+        setMemos((items) => [...restored, ...items.filter((item) => !restored.some((memo) => memo.id === item.id))]);
+        setSelectedMemoIds(new Set(originals.map((memo) => memo.id)));
+      },
+    });
+  }
+
+  async function handleBatchMove(repositoryId: string) {
+    if (!selectedMemos.length) return;
+    await flushPendingSave();
+    const originals = selectedMemos;
+    const target = repositories.find((repo) => repo.id === repositoryId);
+    const saved: Memo[] = [];
+    for (const memo of originals) {
+      saved.push(await saveMemo(memoInputFrom(memo, { repository_id: repositoryId })));
+    }
+    setMemos((items) => [...saved, ...items.filter((item) => !saved.some((memo) => memo.id === item.id))]);
+    setSelectedMemoIds(new Set());
+    setActiveRepo(repositoryId);
+    setActiveMemoId(saved[0]?.id ?? null);
+    notify("info", "Memos moved", `${saved.length} to ${target?.name ?? "repository"}`, {
+      actionLabel: "Undo",
+      action: async () => {
+        const restored: Memo[] = [];
+        for (const memo of originals) {
+          restored.push(await saveMemo(memoInputFrom(memo)));
+        }
+        setMemos((items) => [...restored, ...items.filter((item) => !restored.some((memo) => memo.id === item.id))]);
+        setSelectedMemoIds(new Set(originals.map((memo) => memo.id)));
+      },
+    });
+  }
+
+  async function handleBatchDelete() {
+    if (!selectedMemos.length) return;
+    await flushPendingSave();
+    const originals = selectedMemos;
+    for (const memo of originals) {
+      await deleteMemo(memo.id);
+    }
+    setMemos((items) => items.filter((item) => !selectedMemoIds.has(item.id)));
+    setSelectedMemoIds(new Set());
+    setActiveMemoId((current) => (current && originals.some((memo) => memo.id === current) ? visibleMemos.find((memo) => !selectedMemoIds.has(memo.id))?.id ?? null : current));
+    notify("warning", "Memos deleted", `${originals.length} selected`, {
+      actionLabel: "Undo",
+      action: async () => {
+        const restored: Memo[] = [];
+        for (const memo of originals) {
+          restored.push(await saveMemo(memoInputFrom(memo)));
+        }
+        setMemos((items) => [...restored, ...items.filter((item) => !restored.some((memo) => memo.id === item.id))]);
+        setSelectedMemoIds(new Set(originals.map((memo) => memo.id)));
+        setActiveMemoId(restored[0]?.id ?? null);
       },
     });
   }
@@ -997,10 +1119,46 @@ function WorkbenchApp() {
               );
             })}
           </div>
+          {selectedMemos.length > 0 && (
+            <div className="batch-bar">
+              <strong>{selectedMemos.length} selected</strong>
+              <button onClick={handleBatchArchive}>
+                <Archive size={14} />
+                Archive
+              </button>
+              <select value="" onChange={(event) => event.target.value && handleBatchMove(event.target.value)}>
+                <option value="">Move to...</option>
+                {repositories.map((repo) => (
+                  <option key={repo.id} value={repo.id}>
+                    {repo.name}
+                  </option>
+                ))}
+              </select>
+              <button className="danger-soft" onClick={handleBatchDelete}>
+                <Trash2 size={14} />
+                Delete
+              </button>
+              <button className="icon-button" title="Clear selection" onClick={() => setSelectedMemoIds(new Set())}>
+                <X size={14} />
+              </button>
+            </div>
+          )}
           <div className="list-actions">
             <button className="primary" onClick={handleNewMemo}>
               <Plus size={17} />
               New memo
+            </button>
+            <button
+              className="secondary"
+              onClick={() =>
+                setSelectedMemoIds((current) =>
+                  current.size === visibleMemos.length ? new Set() : new Set(visibleMemos.map((memo) => memo.id)),
+                )
+              }
+              disabled={!visibleMemos.length}
+            >
+              <Check size={17} />
+              {selectedMemos.length === visibleMemos.length && visibleMemos.length ? "Clear" : "Select"}
             </button>
             <button className="secondary" onClick={() => captureRepoId && handleClipboardCapture(captureRepoId)}>
               <Clipboard size={17} />
@@ -1010,10 +1168,12 @@ function WorkbenchApp() {
           <MemoList
             memos={visibleMemos}
             activeMemoId={activeMemo?.id ?? null}
+            selectedIds={selectedMemoIds}
             onSelect={(id) => {
               void flushPendingSave();
               setActiveMemoId(id);
             }}
+            onToggleSelected={toggleMemoSelected}
           />
         </section>
 
