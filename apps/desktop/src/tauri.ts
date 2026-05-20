@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { AppSettings, Bootstrap, Memo, Repository, SaveMemoInput, ShortcutCheckResult } from "./types";
+import type { AppSettings, Bootstrap, LocalStats, Memo, Repository, SaveMemoInput, ShortcutCheckResult } from "./types";
 
 const isTauri = "__TAURI_INTERNALS__" in window;
 export const isDesktopApp = isTauri;
@@ -71,6 +71,15 @@ let demoMemos: Memo[] = [
   },
 ];
 
+function demoStats(): LocalStats {
+  return {
+    memo_count: demoMemos.filter((memo) => !memo.deleted).length,
+    repository_count: 1,
+    pending_operations: 0,
+    last_server_sequence: 0,
+  };
+}
+
 export async function bootstrap(): Promise<Bootstrap> {
   if (isTauri) return invoke("bootstrap");
   return {
@@ -78,6 +87,7 @@ export async function bootstrap(): Promise<Bootstrap> {
     memos: demoMemos,
     device_id: "web-preview",
     settings: getWebSettings(),
+    local_stats: demoStats(),
   };
 }
 

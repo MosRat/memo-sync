@@ -1,9 +1,9 @@
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use memo_core::{
-    ClientInfo, HybridLogicalClock, Memo, MemoFilter, MemoMeta, MemoSource, PullRequest,
-    PullResponse, PushRequest, Repository, RepositoryKind, SyncOperation, SyncOperationKind,
-    DEFAULT_PULL_LIMIT, SYNC_PROTOCOL_VERSION,
+    default_sync_protocol_version, ClientInfo, HybridLogicalClock, Memo, MemoFilter, MemoMeta,
+    MemoSource, PullRequest, PullResponse, PushRequest, Repository, RepositoryKind, SyncOperation,
+    SyncOperationKind, DEFAULT_PULL_LIMIT, SYNC_PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::{
@@ -36,6 +36,22 @@ pub struct SyncSummary {
     pub pushed: usize,
     pub pulled: usize,
     pub server_sequence: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LocalStats {
+    pub memo_count: i64,
+    pub repository_count: i64,
+    pub pending_operations: i64,
+    pub last_server_sequence: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct HealthResponse {
+    ok: bool,
+    server_sequence: i64,
+    #[serde(default = "default_sync_protocol_version")]
+    protocol_version: u16,
 }
 
 impl LocalStore {
@@ -83,6 +99,27 @@ impl LocalStore {
             .collect::<anyhow::Result<Vec<_>>>()?;
         memos.retain(|memo| filter.matches(memo));
         Ok(memos)
+    }
+
+    pub async fn stats(&self) -> anyhow::Result<LocalStats> {
+        let memo_count = scalar_i64(
+            &self.pool,
+            "SELECT COUNT(*) AS value FROM memos WHERE deleted = 0",
+        )
+        .await?;
+        let repository_count =
+            scalar_i64(&self.pool, "SELECT COUNT(*) AS value FROM repositories").await?;
+        let pending_operations = scalar_i64(
+            &self.pool,
+            "SELECT COUNT(*) AS value FROM local_operations WHERE server_sequence IS NULL",
+        )
+        .await?;
+        Ok(LocalStats {
+            memo_count,
+            repository_count,
+            pending_operations,
+            last_server_sequence: self.last_server_sequence().await?,
+        })
     }
 
     pub async fn create_repository(
@@ -181,6 +218,21 @@ impl LocalStore {
             .build()?;
         let mut pushed = 0usize;
         let mut server_sequence = self.last_server_sequence().await?;
+        let health: HealthResponse = client
+            .get(format!("{}/health", server_url.trim_end_matches('/')))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        anyhow::ensure!(health.ok, "sync server is not healthy");
+        anyhow::ensure!(
+            health.protocol_version == SYNC_PROTOCOL_VERSION,
+            "sync protocol mismatch: client {}, server {}",
+            SYNC_PROTOCOL_VERSION,
+            health.protocol_version
+        );
+        server_sequence = server_sequence.max(health.server_sequence);
 
         loop {
             let pending = self.pending_operations(PUSH_BATCH_LIMIT).await?;
@@ -242,6 +294,7 @@ impl LocalStore {
             }
         }
 
+        self.maintain().await?;
         Ok(SyncSummary {
             pushed,
             pulled,
@@ -448,6 +501,19 @@ impl LocalStore {
         .await?;
         Ok(())
     }
+
+    async fn maintain(&self) -> anyhow::Result<()> {
+        sqlx::query("PRAGMA wal_checkpoint(PASSIVE)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("PRAGMA optimize").execute(&self.pool).await?;
+        Ok(())
+    }
+}
+
+async fn scalar_i64(pool: &SqlitePool, sql: &str) -> anyhow::Result<i64> {
+    let row = sqlx::query(sql).fetch_one(pool).await?;
+    Ok(row.get("value"))
 }
 
 fn desktop_client_info() -> ClientInfo {
@@ -521,6 +587,11 @@ async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     .execute(pool)
     .await?;
     sqlx::query(
+        "CREATE INDEX IF NOT EXISTS memos_deleted_updated_idx ON memos(deleted, updated_at)",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS local_operations (
           op_id TEXT PRIMARY KEY,
@@ -529,6 +600,11 @@ async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
           created_at TEXT NOT NULL
         );
         "#,
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS local_operations_pending_idx ON local_operations(server_sequence, created_at)",
     )
     .execute(pool)
     .await?;
@@ -655,7 +731,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(store.pending_operations(PUSH_BATCH_LIMIT).await.unwrap().len(), 0);
+        assert_eq!(
+            store
+                .pending_operations(PUSH_BATCH_LIMIT)
+                .await
+                .unwrap()
+                .len(),
+            0
+        );
         assert!(store
             .memos(MemoFilter {
                 repository_id: Some(repo.id),
@@ -721,5 +804,44 @@ mod tests {
                 } if *repository_id == repo.id && *memo_id == memo.id
             )
         }));
+    }
+
+    #[tokio::test]
+    async fn stats_report_local_queue_and_counts() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalStore::open(dir.path().join("memo.sqlite"))
+            .await
+            .unwrap();
+        let repo = store
+            .create_repository(
+                "Synced".to_string(),
+                false,
+                "#c86f52".to_string(),
+                "device-a",
+            )
+            .await
+            .unwrap();
+        store
+            .save_memo(
+                SaveMemoInput {
+                    id: None,
+                    repository_id: repo.id,
+                    title: "Stats".to_string(),
+                    body_md: "body".to_string(),
+                    tags: BTreeSet::new(),
+                    pinned: false,
+                    archived: false,
+                },
+                MemoSource::Manual,
+                "device-a",
+            )
+            .await
+            .unwrap();
+
+        let stats = store.stats().await.unwrap();
+        assert!(stats.memo_count >= 2);
+        assert!(stats.repository_count >= 3);
+        assert_eq!(stats.pending_operations, 2);
+        assert_eq!(stats.last_server_sequence, 0);
     }
 }

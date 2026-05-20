@@ -8,7 +8,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use store::{LocalStore, SaveMemoInput, SyncSummary};
+use store::{LocalStats, LocalStore, SaveMemoInput, SyncSummary};
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
@@ -39,6 +39,7 @@ struct Bootstrap {
     memos: Vec<Memo>,
     device_id: String,
     settings: AppSettings,
+    local_stats: LocalStats,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -186,11 +187,14 @@ async fn bootstrap(state: State<'_, AppState>) -> Result<Bootstrap, String> {
         .memos(MemoFilter::default())
         .await
         .map_err(to_string)?;
+    let settings = state.settings.lock().unwrap().clone();
+    let local_stats = state.store.stats().await.map_err(to_string)?;
     Ok(Bootstrap {
         repositories,
         memos,
         device_id: state.device_id.clone(),
-        settings: state.settings.lock().unwrap().clone(),
+        settings,
+        local_stats,
     })
 }
 

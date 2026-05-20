@@ -35,6 +35,14 @@ export interface Bootstrap {
   memos: Memo[];
   device_id: string;
   settings: AppSettings;
+  local_stats: LocalStats;
+}
+
+export interface LocalStats {
+  memo_count: number;
+  repository_count: number;
+  pending_operations: number;
+  last_server_sequence: number;
 }
 
 export interface SaveMemoInput {

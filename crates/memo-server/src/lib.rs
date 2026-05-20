@@ -94,6 +94,16 @@ async fn configure_sqlite(pool: &SqlitePool) -> anyhow::Result<()> {
     sqlx::query("PRAGMA busy_timeout = 5000")
         .execute(pool)
         .await?;
+    sqlx::query("PRAGMA temp_store = MEMORY")
+        .execute(pool)
+        .await?;
+    sqlx::query("PRAGMA cache_size = -16000")
+        .execute(pool)
+        .await?;
+    sqlx::query("PRAGMA mmap_size = 268435456")
+        .execute(pool)
+        .await?;
+    sqlx::query("PRAGMA optimize").execute(pool).await?;
     Ok(())
 }
 
@@ -132,6 +142,7 @@ async fn health(State(state): State<AppState>) -> Result<Json<Health>, ServerErr
     Ok(Json(Health {
         ok: true,
         server_sequence: sequence,
+        protocol_version: SYNC_PROTOCOL_VERSION,
     }))
 }
 
@@ -139,6 +150,7 @@ async fn health(State(state): State<AppState>) -> Result<Json<Health>, ServerErr
 struct Health {
     ok: bool,
     server_sequence: i64,
+    protocol_version: u16,
 }
 
 async fn push(

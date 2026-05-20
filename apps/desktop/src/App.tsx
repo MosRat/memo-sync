@@ -30,7 +30,7 @@ import {
   X,
 } from "lucide-react";
 import { lazy, Suspense, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
-import type { AppSettings, Memo, Repository, SaveMemoInput } from "./types";
+import type { AppSettings, LocalStats, Memo, Repository, SaveMemoInput } from "./types";
 import {
   bootstrap,
   captureClipboardMemo,
@@ -69,6 +69,13 @@ const defaultSettings: AppSettings = {
   auto_sync_interval_secs: 60,
 };
 
+const emptyStats: LocalStats = {
+  memo_count: 0,
+  repository_count: 0,
+  pending_operations: 0,
+  last_server_sequence: 0,
+};
+
 type Mode = "edit" | "preview" | "split";
 type Dialog = "settings" | "shortcuts" | "about" | null;
 type CaptureMode = "edit" | "split" | "preview";
@@ -99,6 +106,7 @@ function WorkbenchApp() {
   const [serverUrl, setServerUrl] = useState("http://127.0.0.1:7373");
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [syncText, setSyncText] = useState("Idle");
+  const [localStats, setLocalStats] = useState<LocalStats>(emptyStats);
   const [deviceId, setDeviceId] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -140,6 +148,7 @@ function WorkbenchApp() {
             ? `Auto: pushed ${payload.pushed}, pulled ${payload.pulled}`
             : `Pushed ${payload.pushed}, pulled ${payload.pulled}`,
         );
+        void bootstrap().then((data) => setLocalStats(data.local_stats));
       } else if (payload.background) {
         setSyncText(`Auto sync: ${payload.message}`);
       }
@@ -156,6 +165,7 @@ function WorkbenchApp() {
     setMemos(data.memos);
     setDeviceId(data.device_id);
     setSettings(data.settings);
+    setLocalStats(data.local_stats);
     setServerUrl(data.settings.server_url);
     setMode(data.settings.writing_mode);
     setSidebarCollapsed(data.settings.compact_sidebar_on_start);
@@ -339,8 +349,7 @@ function WorkbenchApp() {
       const result = await syncNow(serverUrl);
       setSyncText(`Pushed ${result.pushed}, pulled ${result.pulled}`);
       const refreshed = await bootstrap();
-      setRepositories(refreshed.repositories);
-      setMemos(refreshed.memos);
+      applyBootstrap(refreshed, activeMemoId);
     } catch (error) {
       setSyncText(error instanceof Error ? error.message : String(error));
     }
@@ -425,6 +434,20 @@ function WorkbenchApp() {
               <Cloud size={16} />
               Sync now
             </button>
+            <div className="sync-stats" aria-label="Local sync status">
+              <span>
+                <strong>{localStats.pending_operations}</strong>
+                queued
+              </span>
+              <span>
+                <strong>{localStats.memo_count}</strong>
+                notes
+              </span>
+              <span>
+                <strong>{localStats.last_server_sequence}</strong>
+                seq
+              </span>
+            </div>
             <small>{syncText}</small>
           </div>
 
@@ -593,6 +616,7 @@ function WorkbenchApp() {
           settings={settings}
           onSaveSettings={handleSaveSettings}
           deviceId={deviceId}
+          localStats={localStats}
           isDesktop={isDesktopApp}
         />
       )}
@@ -793,12 +817,14 @@ function QuickCaptureWindow() {
 function SettingsWindow() {
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [deviceId, setDeviceId] = useState("");
+  const [localStats, setLocalStats] = useState<LocalStats>(emptyStats);
   const [dialog, setDialog] = useState<Exclude<Dialog, null>>("settings");
 
   useEffect(() => {
     bootstrap().then((data) => {
       setSettings(data.settings);
       setDeviceId(data.device_id);
+      setLocalStats(data.local_stats);
     });
   }, []);
 
@@ -818,6 +844,7 @@ function SettingsWindow() {
         settings={settings}
         onSaveSettings={saveSettings}
         deviceId={deviceId}
+        localStats={localStats}
         isDesktop={true}
         standalone
       />
@@ -899,6 +926,7 @@ function AppDialog({
   settings,
   onSaveSettings,
   deviceId,
+  localStats,
   isDesktop,
   standalone = false,
 }: {
@@ -909,6 +937,7 @@ function AppDialog({
   settings: AppSettings;
   onSaveSettings: (settings: AppSettings) => Promise<void>;
   deviceId: string;
+  localStats: LocalStats;
   isDesktop: boolean;
   standalone?: boolean;
 }) {
@@ -1033,6 +1062,16 @@ function AppDialog({
                 <option value={900}>15 minutes</option>
               </select>
             </label>
+            <div className="settings-health">
+              <div>
+                <span>Queued operations</span>
+                <strong>{localStats.pending_operations}</strong>
+              </div>
+              <div>
+                <span>Known server sequence</span>
+                <strong>{localStats.last_server_sequence}</strong>
+              </div>
+            </div>
             <div className="settings-actions">
               <button className="primary" onClick={saveDraft}>
                 <Check size={16} />
@@ -1083,6 +1122,24 @@ function AppDialog({
           <div className="about-panel">
             <strong>Memo Sync</strong>
             <p>Local-first notes with repositories, Markdown, tray capture, and a Rust sync server.</p>
+            <dl>
+              <div>
+                <dt>Notes</dt>
+                <dd>{localStats.memo_count}</dd>
+              </div>
+              <div>
+                <dt>Repositories</dt>
+                <dd>{localStats.repository_count}</dd>
+              </div>
+              <div>
+                <dt>Pending sync</dt>
+                <dd>{localStats.pending_operations}</dd>
+              </div>
+              <div>
+                <dt>Server sequence</dt>
+                <dd>{localStats.last_server_sequence}</dd>
+              </div>
+            </dl>
             <small>Copyright 2026 Memo Sync Contributors. MIT licensed.</small>
           </div>
         )}
