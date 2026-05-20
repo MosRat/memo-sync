@@ -33,7 +33,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { lazy, Suspense, type CSSProperties, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppSettings, LocalStats, Memo, Repository, SaveMemoInput } from "./types";
 import {
   bootstrap,
@@ -67,7 +67,6 @@ import { ToastStack, type ToastKind, type ToastMessage } from "./components/Toas
 import { TypstPreview } from "./components/TypstPreview";
 
 const colors = ["#c86f52", "#6f8f83", "#5f7597", "#9a7a42", "#8a6fa8"];
-const MarkdownView = lazy(() => import("./MarkdownView"));
 const defaultSettings: AppSettings = {
   server_url: "http://127.0.0.1:7373",
   quick_capture_shortcut: "Ctrl+Shift+KeyM",
@@ -1512,13 +1511,11 @@ function QuickCaptureWindow() {
             spellCheck={false}
             placeholder="Paste an idea, code, or a line you want to keep. Ctrl+Enter saves."
           />
-          <article className="capture-preview markdown">
+          <article className="capture-preview markdown preview-surface">
             {quickText.trim() ? (
-              <Suspense fallback={<p className="markdown-loading">Rendering preview...</p>}>
-                <MarkdownView>{quickText}</MarkdownView>
-              </Suspense>
+              <TypstPreview body={quickText} format="markdown" renderPath="typst-inline" template="literary" />
             ) : (
-              <p className="preview-empty">Markdown preview</p>
+              <p className="preview-empty">Typst preview</p>
             )}
           </article>
         </div>

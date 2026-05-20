@@ -10,16 +10,20 @@ use typst::foundations::{Dict, IntoValue};
 use typst::layout::{Abs, PagedDocument};
 use typst_as_lib::{typst_kit_options::TypstKitFontOptions, TypstEngine, TypstTemplateMainFile};
 
-const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v4";
+const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v5";
 const RENDER_MAIN_TEMPLATE: &str = r#"#import sys: inputs
 #eval(inputs.source, mode: "markup")
 "#;
+const PREVIEW_SERIF_FONT: &[u8] = include_bytes!("../assets/fonts/NotoSerifSC-VF.ttf");
+const PREVIEW_SANS_FONT: &[u8] = include_bytes!("../assets/fonts/NotoSansSC-VF.ttf");
+const PREVIEW_MONO_FONT: &[u8] = include_bytes!("../assets/fonts/CascadiaCode.ttf");
 
 static RENDER_ENGINE: LazyLock<TypstEngine<TypstTemplateMainFile>> = LazyLock::new(|| {
     TypstEngine::builder()
+        .fonts([PREVIEW_SERIF_FONT, PREVIEW_SANS_FONT, PREVIEW_MONO_FONT])
         .search_fonts_with(
             TypstKitFontOptions::default()
-                .include_system_fonts(true)
+                .include_system_fonts(false)
                 .include_embedded_fonts(true),
         )
         .main_file(RENDER_MAIN_TEMPLATE)
@@ -625,6 +629,20 @@ mod tests {
         })
         .unwrap();
         assert!(output.svg.contains("<svg"));
+        assert!(svg_has_text_geometry(&output.svg));
+    }
+
+    #[test]
+    fn embedded_fonts_render_chinese_and_code() {
+        let output = render_memo(RenderMemoInput {
+            body: "# 备忘录\n\n中文 English mixed text.\n\n```rust\nfn main() {}\n```".to_string(),
+            format: RenderFormat::Markdown,
+            template: RenderTemplate::Literary,
+        })
+        .unwrap();
+
+        assert!(output.svg.contains("<defs"));
+        assert!(output.svg.matches("<use").count() > 20);
         assert!(svg_has_text_geometry(&output.svg));
     }
 }
