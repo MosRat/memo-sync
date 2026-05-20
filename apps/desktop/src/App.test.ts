@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { memoSearchText, tokenizeTags } from "./search";
+import { memoSearchText, textStats, textStatsLabel, tokenizeTags } from "./search";
 
 describe("tag parsing", () => {
   it("drops empty segments and preserves user order", () => {
@@ -30,5 +30,12 @@ describe("memo search text", () => {
         },
       }),
     ).toContain("rust");
+  });
+});
+
+describe("text stats", () => {
+  it("counts mixed English and Chinese writing without allocating UI state", () => {
+    expect(textStats("Hello memo\n中文")).toEqual({ lines: 2, words: 4, chars: 13 });
+    expect(textStatsLabel("")).toBe("0 lines / 0 words / 0 chars");
   });
 });

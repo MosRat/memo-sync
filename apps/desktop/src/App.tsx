@@ -1,5 +1,6 @@
 import {
   Archive,
+  Bold,
   Check,
   Clipboard,
   Cloud,
@@ -11,7 +12,9 @@ import {
   FolderPlus,
   Heading1,
   Info,
+  Italic,
   Keyboard,
+  Link,
   List,
   Maximize2,
   Minimize2,
@@ -55,7 +58,7 @@ import {
   updateAppSettings,
   windowAction,
 } from "./tauri";
-import { memoSearchText, tokenizeTags } from "./search";
+import { memoSearchText, textStatsLabel, tokenizeTags } from "./search";
 import { CommandPalette, type CommandItem } from "./components/CommandPalette";
 import { MemoList } from "./components/MemoList";
 import { ToastStack, type ToastKind, type ToastMessage } from "./components/ToastStack";
@@ -132,6 +135,7 @@ function WorkbenchApp() {
   const quickRepoRef = useRef("");
   const repositoriesRef = useRef<Repository[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
   const searchRequestRef = useRef(0);
   const saveTimerRef = useRef<number | null>(null);
   const pendingSaveRef = useRef<SaveMemoInput | null>(null);
@@ -254,6 +258,7 @@ function WorkbenchApp() {
   const activeRepoName = activeRepo === "all" ? "All notes" : repositories.find((repo) => repo.id === activeRepo)?.name ?? "Repository";
   const activeViewLabel = viewFilters.find((item) => item.id === viewFilter)?.label ?? "Inbox";
   const captureRepoId = activeRepo !== "all" ? activeRepo : quickRepo || repositories[0]?.id || "";
+  const activeMemoStats = useMemo(() => textStatsLabel(activeMemo?.body_md ?? ""), [activeMemo?.body_md]);
 
   const notify = useCallback((kind: ToastKind, title: string, detail?: string) => {
     const id = toastIdRef.current + 1;
@@ -541,6 +546,81 @@ function WorkbenchApp() {
           },
     );
     replaceMemo(saved);
+  }
+
+  function updateEditorBody(nextBody: string, selection?: { start: number; end: number }) {
+    if (!activeMemo) return;
+    void handleSave({ body_md: nextBody }, { debounce: true });
+    window.requestAnimationFrame(() => {
+      editorRef.current?.focus();
+      if (selection) editorRef.current?.setSelectionRange(selection.start, selection.end);
+    });
+  }
+
+  function wrapEditorSelection(before: string, after = before, placeholder = "text") {
+    if (!activeMemo) return;
+    const element = editorRef.current;
+    const body = activeMemo.body_md;
+    const start = element?.selectionStart ?? body.length;
+    const end = element?.selectionEnd ?? body.length;
+    const selected = body.slice(start, end) || placeholder;
+    const next = `${body.slice(0, start)}${before}${selected}${after}${body.slice(end)}`;
+    updateEditorBody(next, { start: start + before.length, end: start + before.length + selected.length });
+  }
+
+  function prefixEditorLines(prefix: string, placeholder = "List item") {
+    if (!activeMemo) return;
+    const element = editorRef.current;
+    const body = activeMemo.body_md;
+    const start = element?.selectionStart ?? body.length;
+    const end = element?.selectionEnd ?? body.length;
+    const selected = body.slice(start, end) || placeholder;
+    const prefixed = selected
+      .split(/\r\n|\r|\n/)
+      .map((line) => `${prefix}${line}`)
+      .join("\n");
+    const next = `${body.slice(0, start)}${prefixed}${body.slice(end)}`;
+    updateEditorBody(next, { start, end: start + prefixed.length });
+  }
+
+  function insertEditorCodeBlock() {
+    if (!activeMemo) return;
+    const element = editorRef.current;
+    const body = activeMemo.body_md;
+    const start = element?.selectionStart ?? body.length;
+    const end = element?.selectionEnd ?? body.length;
+    const selected = body.slice(start, end) || "fn main() {\n  \n}";
+    const block = `\n\`\`\`rust\n${selected}\n\`\`\`\n`;
+    const next = `${body.slice(0, start)}${block}${body.slice(end)}`;
+    const caret = start + block.length - 5;
+    updateEditorBody(next, { start: caret, end: caret });
+  }
+
+  function handleEditorKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (!activeMemo) return;
+    if (event.key === "Tab") {
+      event.preventDefault();
+      const element = event.currentTarget;
+      const start = element.selectionStart;
+      const end = element.selectionEnd;
+      const next = `${activeMemo.body_md.slice(0, start)}  ${activeMemo.body_md.slice(end)}`;
+      updateEditorBody(next, { start: start + 2, end: start + 2 });
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b") {
+      event.preventDefault();
+      wrapEditorSelection("**", "**", "bold");
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "i") {
+      event.preventDefault();
+      wrapEditorSelection("*", "*", "italic");
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      void flushPendingSave();
+    }
   }
 
   async function handleNewMemo() {
@@ -840,6 +920,7 @@ function WorkbenchApp() {
                 <span>{activeMemo.source}</span>
                 <span>{deviceId.slice(0, 24)}</span>
                 <span className={saveText === "Saved" ? "save-state saved" : "save-state"}>{saveText}</span>
+                <span>{activeMemoStats}</span>
                 <input
                   value={activeMemo.tags.join(", ")}
                   onChange={(event) =>
@@ -851,9 +932,42 @@ function WorkbenchApp() {
                 />
               </div>
 
+              {mode !== "preview" && (
+                <div className="writebar" aria-label="Markdown tools">
+                  <button title="Heading" onClick={() => prefixEditorLines("# ", "Heading")}>
+                    <Heading1 size={15} />
+                  </button>
+                  <button title="Bold" onClick={() => wrapEditorSelection("**", "**", "bold")}>
+                    <Bold size={15} />
+                  </button>
+                  <button title="Italic" onClick={() => wrapEditorSelection("*", "*", "italic")}>
+                    <Italic size={15} />
+                  </button>
+                  <button title="List" onClick={() => prefixEditorLines("- ", "List item")}>
+                    <List size={15} />
+                  </button>
+                  <button title="Quote" onClick={() => prefixEditorLines("> ", "Quote")}>
+                    <Quote size={15} />
+                  </button>
+                  <button title="Code block" onClick={insertEditorCodeBlock}>
+                    <Code2 size={15} />
+                  </button>
+                  <button title="Link" onClick={() => wrapEditorSelection("[", "](https://)", "link")}>
+                    <Link size={15} />
+                  </button>
+                  <span>Ctrl+Enter saves now</span>
+                </div>
+              )}
+
               <div className={`editor-grid ${mode}`}>
                 {mode !== "preview" && (
-                  <textarea value={activeMemo.body_md} onChange={(event) => handleSave({ body_md: event.target.value }, { debounce: true })} spellCheck={false} />
+                  <textarea
+                    ref={editorRef}
+                    value={activeMemo.body_md}
+                    onChange={(event) => handleSave({ body_md: event.target.value }, { debounce: true })}
+                    onKeyDown={handleEditorKeyDown}
+                    spellCheck={false}
+                  />
                 )}
                 {mode !== "edit" && (
                   <article className="markdown">
