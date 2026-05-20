@@ -10,7 +10,7 @@ use typst::foundations::{Dict, IntoValue};
 use typst::layout::{Abs, PagedDocument};
 use typst_as_lib::{typst_kit_options::TypstKitFontOptions, TypstEngine, TypstTemplateMainFile};
 
-const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v5";
+const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v6";
 const RENDER_MAIN_TEMPLATE: &str = r#"#import sys: inputs
 #eval(inputs.source, mode: "markup")
 "#;
@@ -276,7 +276,7 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
     let prelude = match template {
         RenderTemplate::Literary => {
             r##"
-#set page(width: 320pt, height: auto, margin: (x: 16pt, y: 18pt))
+#set page(width: 320pt, height: auto, margin: (x: 16pt, y: 18pt), fill: none)
 #set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Microsoft YaHei", "New Computer Modern"), size: 14.8pt, lang: "zh", fill: rgb("#211f1b"))
 #set par(leading: 0.76em, justify: false, spacing: 0.58em)
 #show heading: it => block(above: 0.62em, below: 0.32em, text(weight: 720, fill: rgb("#171512"), it))
@@ -291,7 +291,7 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
         }
         RenderTemplate::Compact => {
             r##"
-#set page(width: 304pt, height: auto, margin: (x: 14pt, y: 15pt))
+#set page(width: 304pt, height: auto, margin: (x: 14pt, y: 15pt), fill: none)
 #set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 13.2pt, lang: "zh", fill: rgb("#27231f"))
 #set par(leading: 0.58em, justify: false, spacing: 0.32em)
 #show heading: it => block(above: 0.38em, below: 0.18em, text(weight: 720, fill: rgb("#24211d"), it))
@@ -306,7 +306,7 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
         }
         RenderTemplate::Technical => {
             r##"
-#set page(width: 328pt, height: auto, margin: (x: 16pt, y: 16pt))
+#set page(width: 328pt, height: auto, margin: (x: 16pt, y: 16pt), fill: none)
 #set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 13.8pt, lang: "zh", fill: rgb("#20231f"))
 #set par(leading: 0.64em, justify: false, spacing: 0.4em)
 #show heading: it => block(above: 0.5em, below: 0.24em, text(weight: 740, fill: rgb("#1e2520"), it))
@@ -644,5 +644,20 @@ mod tests {
         assert!(output.svg.contains("<defs"));
         assert!(output.svg.matches("<use").count() > 20);
         assert!(svg_has_text_geometry(&output.svg));
+    }
+
+    #[test]
+    fn typst_preview_page_is_transparent() {
+        let output = render_memo(RenderMemoInput {
+            body: "Transparent preview surface".to_string(),
+            format: RenderFormat::Markdown,
+            template: RenderTemplate::Literary,
+        })
+        .unwrap();
+
+        assert!(
+            !output.svg.contains("fill=\"#ffffff\""),
+            "preview SVG should not paint its own white page"
+        );
     }
 }

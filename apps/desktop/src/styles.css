@@ -1000,6 +1000,10 @@ textarea:focus {
 
 .preview-surface:has(.typst-preview) {
   padding: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.68), rgba(255, 252, 245, 0.5)),
+    rgba(247, 241, 229, 0.56);
+  box-shadow: inset 0 0 0 1px rgba(62, 54, 44, 0.06);
 }
 
 .markdown > *:first-child {
@@ -1045,6 +1049,7 @@ textarea:focus {
   overflow: auto;
   display: flex;
   flex-direction: column;
+  border-radius: 8px;
 }
 
 .typst-preview > div:not(.render-status) {
@@ -1061,11 +1066,9 @@ textarea:focus {
   max-width: 100%;
   height: auto;
   margin: 0 auto;
-  border-radius: 10px;
-  background: #fffdf8;
-  box-shadow:
-    0 20px 46px rgba(44, 37, 30, 0.12),
-    0 0 0 1px rgba(62, 54, 44, 0.08);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .editor-split .typst-preview svg {
@@ -1094,12 +1097,10 @@ textarea:focus {
   max-width: 100%;
   height: auto;
   border: 0;
-  border-radius: 10px;
-  background: #fffdf8;
+  border-radius: 0;
+  background: transparent;
   object-fit: contain;
-  box-shadow:
-    0 20px 46px rgba(44, 37, 30, 0.12),
-    0 0 0 1px rgba(62, 54, 44, 0.08);
+  box-shadow: none;
 }
 
 .typst-preview-asset svg {
@@ -2028,6 +2029,13 @@ textarea:focus {
   border: 1px solid rgba(62, 54, 44, 0.12);
   border-radius: 8px;
   background: rgba(255, 252, 245, 0.66);
+}
+
+.capture-preview:has(.typst-preview) {
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.58), rgba(255, 252, 245, 0.42)),
+    rgba(247, 241, 229, 0.58);
+  box-shadow: inset 0 0 0 1px rgba(62, 54, 44, 0.05);
 }
 
 .capture-preview p:first-child {
