@@ -29,7 +29,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { lazy, Suspense, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppSettings, LocalStats, Memo, Repository, SaveMemoInput } from "./types";
 import {
   bootstrap,
@@ -117,6 +117,7 @@ function WorkbenchApp() {
   const [saveText, setSaveText] = useState("Saved");
   const quickRepoRef = useRef("");
   const repositoriesRef = useRef<Repository[]>([]);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const searchRequestRef = useRef(0);
   const saveTimerRef = useRef<number | null>(null);
   const pendingSaveRef = useRef<SaveMemoInput | null>(null);
@@ -224,6 +225,59 @@ function WorkbenchApp() {
   const tags = allTags;
   const activeRepository = repositories.find((repo) => repo.id === activeMemo?.repository_id);
   const captureRepoId = activeRepo !== "all" ? activeRepo : quickRepo || repositories[0]?.id || "";
+
+  const selectMemoByOffset = useCallback(
+    (offset: number) => {
+      if (!visibleMemos.length) return;
+      const currentIndex = Math.max(
+        0,
+        visibleMemos.findIndex((memo) => memo.id === (activeMemoId ?? activeMemo?.id)),
+      );
+      const nextIndex = Math.min(Math.max(currentIndex + offset, 0), visibleMemos.length - 1);
+      setActiveMemoId(visibleMemos[nextIndex].id);
+    },
+    [activeMemo?.id, activeMemoId, visibleMemos],
+  );
+
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName;
+      const isTyping = tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT" || target?.isContentEditable;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+        return;
+      }
+      if (event.key === "Escape" && document.activeElement === searchInputRef.current) {
+        event.preventDefault();
+        setQuery("");
+        searchInputRef.current?.blur();
+        return;
+      }
+      if (isTyping) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        void handleNewMemo();
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "j") {
+        event.preventDefault();
+        showQuickCaptureWindow();
+        return;
+      }
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        selectMemoByOffset(1);
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        selectMemoByOffset(-1);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectMemoByOffset]);
 
   function memoInputFrom(memo: Memo, patch: Partial<SaveMemoInput> = {}): SaveMemoInput {
     return {
@@ -501,7 +555,7 @@ function WorkbenchApp() {
         <section className="list-pane">
           <div className="searchbar">
             <Search size={18} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search text, tags, metadata" />
+            <input ref={searchInputRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search text, tags, metadata" />
           </div>
           <div className="list-actions">
             <button className="primary" onClick={handleNewMemo}>
