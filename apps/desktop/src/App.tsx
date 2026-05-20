@@ -74,6 +74,8 @@ const defaultSettings: AppSettings = {
   clipboard_capture_shortcut: "Ctrl+Shift+Alt+KeyV",
   settings_shortcut: "Ctrl+Shift+KeyS",
   writing_mode: "split",
+  preview_render_path: "typst-inline",
+  preview_template: "literary",
   compact_sidebar_on_start: false,
   auto_sync_enabled: true,
   auto_sync_interval_secs: 60,
@@ -1275,7 +1277,12 @@ function WorkbenchApp() {
                 )}
                 {mode !== "edit" && (
                   <article className="markdown">
-                    <TypstPreview body={activeMemo.body_md} format={activeMemo.tags.includes("typst") ? "typst" : "markdown"} />
+                    <TypstPreview
+                      body={activeMemo.body_md}
+                      format={activeMemo.tags.includes("typst") ? "typst" : "markdown"}
+                      renderPath={settings.preview_render_path}
+                      template={settings.preview_template}
+                    />
                   </article>
                 )}
               </div>
@@ -1754,6 +1761,23 @@ function AppDialog({
                 <option value="split">Editor and preview</option>
                 <option value="edit">Editor first</option>
                 <option value="preview">Preview first</option>
+              </select>
+            </label>
+            <label>
+              <span>Preview render path</span>
+              <select value={draft.preview_render_path} onChange={(event) => setDraft({ ...draft, preview_render_path: event.target.value as AppSettings["preview_render_path"] })}>
+                <option value="typst-inline">Typst inline SVG</option>
+                <option value="typst-asset">Typst asset protocol</option>
+                <option value="markdown">React Markdown</option>
+                <option value="auto">Auto</option>
+              </select>
+            </label>
+            <label>
+              <span>Typst template</span>
+              <select value={draft.preview_template} onChange={(event) => setDraft({ ...draft, preview_template: event.target.value as AppSettings["preview_template"] })}>
+                <option value="literary">Literary serif</option>
+                <option value="compact">Compact notes</option>
+                <option value="technical">Technical code</option>
               </select>
             </label>
             <label className="toggle setting-toggle">

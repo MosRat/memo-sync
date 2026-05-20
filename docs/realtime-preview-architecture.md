@@ -13,11 +13,11 @@ Tauri's communication model matters because rendered SVG can become large. `invo
 ```text
 React editor
   -> debounced render request
-  -> Tauri invoke(render_memo_preview_asset)
+  -> Tauri invoke(render_memo_preview or render_memo_preview_asset)
   -> Rust render cache lookup
   -> spawn_blocking Typst compile on miss
   -> Typst/cmarker -> merged SVG + page SVGs in Rust cache
-  -> React loads memo-preview://localhost/page/<cacheKey>/<page>.svg
+  -> React either inlines SVG or loads/fetches memo-preview://localhost/page/<cacheKey>/<page>.svg
      (Windows/WebView2 uses http://memo-preview.localhost/page/<cacheKey>/<page>.svg)
 ```
 
@@ -29,11 +29,15 @@ Implemented safeguards:
 - Rust `spawn_blocking`: Typst compilation does not block the async runtime
 - Rust LRU cache: 96 entries, 24 MiB max SVG bytes
 - cache key: `format + body`
+- cache key includes the Typst preview template, so visual presets do not collide
 - custom `memo-preview://` protocol: SVG is loaded as a WebView resource instead of being serialized through JSON IPC
 - page asset protocol: pages can be loaded independently through `memo-preview://localhost/page/<cacheKey>/<page>.svg`
 - Windows URL mapping: WebView2 resolves the protocol through `http://memo-preview.localhost/...`
 - page metadata: render metadata includes page dimensions so the frontend can reserve stable preview space
 - image-based preview surface: page SVGs are mounted with `<img>`, avoiding WebView2 `<object>` clipping and nested-document quirks
+- default inline SVG path: main preview uses inline SVG by default because it has the most reliable sizing in WebView2
+- user-selectable render path: `auto`, `typst-inline`, `typst-asset`, and `markdown`
+- user-selectable Typst templates: `literary`, `compact`, and `technical`
 - legacy SVG IPC fallback: keeps preview available if a platform rejects the asset path
 - cmarker test: ignored by default but manually runnable because package fetch may use network
 

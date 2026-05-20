@@ -19,6 +19,20 @@ pub enum RenderFormat {
 pub struct RenderMemoInput {
     pub body: String,
     pub format: RenderFormat,
+    #[serde(default = "default_render_template")]
+    pub template: RenderTemplate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RenderTemplate {
+    Literary,
+    Compact,
+    Technical,
+}
+
+fn default_render_template() -> RenderTemplate {
+    RenderTemplate::Literary
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,8 +81,8 @@ pub fn render_memo(input: RenderMemoInput) -> anyhow::Result<RenderMemoOutput> {
     let cache_key = render_cache_key(&input);
     let started = Instant::now();
     let source = match input.format {
-        RenderFormat::Markdown => markdown_source().to_string(),
-        RenderFormat::Typst => typst_source(&input.body),
+        RenderFormat::Markdown => markdown_source(input.template).to_string(),
+        RenderFormat::Typst => typst_source(&input.body, input.template),
     };
     let mut builder =
         TypstEngine::builder().with_static_source_file_resolver([("main.typ", source.as_str())]);
@@ -222,7 +236,7 @@ impl RenderCache {
 }
 
 pub fn render_cache_key(input: &RenderMemoInput) -> String {
-    cache_key(&input.body, input.format)
+    cache_key(&input.body, input.format, input.template)
 }
 
 fn move_to_back(order: &mut VecDeque<String>, key: &str) {
@@ -230,40 +244,105 @@ fn move_to_back(order: &mut VecDeque<String>, key: &str) {
     order.push_back(key.to_string());
 }
 
-fn markdown_source() -> &'static str {
-    r##"
+fn markdown_source(template: RenderTemplate) -> &'static str {
+    match template {
+        RenderTemplate::Literary => {
+            r##"
 #import "@preview/cmarker:0.1.8"
-#set page(width: 480pt, height: auto, margin: (x: 22pt, y: 22pt))
+#set page(width: 560pt, height: auto, margin: (x: 34pt, y: 30pt))
 #set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Microsoft YaHei", "New Computer Modern"), size: 12pt, lang: "zh")
-#set par(leading: 0.72em, justify: false)
+#set par(leading: 0.82em, justify: false, spacing: 0.72em)
+#show heading: it => block(above: 0.72em, below: 0.38em, text(weight: 700, fill: rgb("#211f1b"), it))
+#show emph: it => text(style: "italic", fill: rgb("#4b443b"), it)
 #show raw: it => block(
   fill: rgb("#20261f"),
-  radius: 4pt,
-  inset: 9pt,
+  radius: 5pt,
+  inset: 11pt,
   width: 100%,
   text(font: ("Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.5pt, fill: rgb("#eaf1e4"), it)
 )
 #cmarker.render(read("/memo.md"), raw-typst: false)
 "##
+        }
+        RenderTemplate::Compact => {
+            r##"
+#import "@preview/cmarker:0.1.8"
+#set page(width: 520pt, height: auto, margin: (x: 22pt, y: 20pt))
+#set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 10.6pt, lang: "zh")
+#set par(leading: 0.62em, justify: false, spacing: 0.38em)
+#show heading: it => block(above: 0.44em, below: 0.24em, text(weight: 700, fill: rgb("#24211d"), it))
+#show raw: it => block(
+  fill: rgb("#20261f"),
+  radius: 4pt,
+  inset: 8pt,
+  width: 100%,
+  text(font: ("Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 8.8pt, fill: rgb("#eaf1e4"), it)
+)
+#cmarker.render(read("/memo.md"), raw-typst: false)
+"##
+        }
+        RenderTemplate::Technical => {
+            r##"
+#import "@preview/cmarker:0.1.8"
+#set page(width: 560pt, height: auto, margin: (x: 28pt, y: 24pt))
+#set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 11pt, lang: "zh")
+#set par(leading: 0.7em, justify: false, spacing: 0.48em)
+#show heading: it => block(above: 0.58em, below: 0.3em, text(weight: 720, fill: rgb("#1e2520"), it))
+#show raw: it => block(
+  fill: rgb("#18201b"),
+  radius: 4pt,
+  inset: 10pt,
+  width: 100%,
+  text(font: ("Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.2pt, fill: rgb("#dfece2"), it)
+)
+#cmarker.render(read("/memo.md"), raw-typst: false)
+"##
+        }
+    }
 }
 
-fn typst_source(body: &str) -> String {
-    format!(
-        r#"
-#set page(width: 480pt, height: auto, margin: (x: 22pt, y: 22pt))
+fn typst_source(body: &str, template: RenderTemplate) -> String {
+    let prelude = match template {
+        RenderTemplate::Literary => {
+            r#"
+#set page(width: 560pt, height: auto, margin: (x: 34pt, y: 30pt))
 #set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Microsoft YaHei", "New Computer Modern"), size: 12pt, lang: "zh")
-#set par(leading: 0.72em, justify: false)
+#set par(leading: 0.82em, justify: false, spacing: 0.72em)
+"#
+        }
+        RenderTemplate::Compact => {
+            r#"
+#set page(width: 520pt, height: auto, margin: (x: 22pt, y: 20pt))
+#set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 10.6pt, lang: "zh")
+#set par(leading: 0.62em, justify: false, spacing: 0.38em)
+"#
+        }
+        RenderTemplate::Technical => {
+            r#"
+#set page(width: 560pt, height: auto, margin: (x: 28pt, y: 24pt))
+#set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 11pt, lang: "zh")
+#set par(leading: 0.7em, justify: false, spacing: 0.48em)
+"#
+        }
+    };
+    format!(
+        r#"{prelude}
 {}
 "#,
         body
     )
 }
 
-fn cache_key(body: &str, format: RenderFormat) -> String {
+fn cache_key(body: &str, format: RenderFormat, template: RenderTemplate) -> String {
     let mut hasher = Sha256::new();
     hasher.update(match format {
         RenderFormat::Markdown => b"markdown".as_slice(),
         RenderFormat::Typst => b"typst".as_slice(),
+    });
+    hasher.update(match template {
+        RenderTemplate::Literary => b"literary".as_slice(),
+        RenderTemplate::Compact => b"compact".as_slice(),
+        RenderTemplate::Technical => b"technical".as_slice(),
     });
     hasher.update(body.as_bytes());
     format!("{:x}", hasher.finalize())
@@ -276,8 +355,12 @@ mod tests {
     #[test]
     fn cache_key_changes_by_format() {
         assert_ne!(
-            cache_key("# Hello", RenderFormat::Markdown),
-            cache_key("# Hello", RenderFormat::Typst)
+            cache_key("# Hello", RenderFormat::Markdown, RenderTemplate::Literary),
+            cache_key("# Hello", RenderFormat::Typst, RenderTemplate::Literary)
+        );
+        assert_ne!(
+            cache_key("# Hello", RenderFormat::Markdown, RenderTemplate::Literary),
+            cache_key("# Hello", RenderFormat::Markdown, RenderTemplate::Compact)
         );
     }
 
@@ -286,6 +369,7 @@ mod tests {
         let output = render_memo(RenderMemoInput {
             body: "Hello *Typst*".to_string(),
             format: RenderFormat::Typst,
+            template: RenderTemplate::Literary,
         })
         .unwrap();
         assert!(output.svg.contains("<svg"));
@@ -355,6 +439,7 @@ mod tests {
         let output = render_memo(RenderMemoInput {
             body: "# Hello\n\nUse **Markdown**.".to_string(),
             format: RenderFormat::Markdown,
+            template: RenderTemplate::Literary,
         })
         .unwrap();
         assert!(output.svg.contains("<svg"));

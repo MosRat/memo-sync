@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { AppSettings, Bootstrap, LocalStats, Memo, MemoFilter, RenderFormat, RenderMemoAssetOutput, RenderMemoOutput, Repository, SaveMemoInput, ShortcutCheckResult } from "./types";
+import type { AppSettings, Bootstrap, LocalStats, Memo, MemoFilter, RenderFormat, RenderMemoAssetOutput, RenderMemoOutput, RenderTemplate, Repository, SaveMemoInput, ShortcutCheckResult } from "./types";
 
 const isTauri = "__TAURI_INTERNALS__" in window;
 export const isDesktopApp = isTauri;
@@ -38,6 +38,8 @@ const defaultSettings: AppSettings = {
   clipboard_capture_shortcut: "Ctrl+Shift+Alt+KeyV",
   settings_shortcut: "Ctrl+Shift+KeyS",
   writing_mode: "split",
+  preview_render_path: "typst-inline",
+  preview_template: "literary",
   compact_sidebar_on_start: false,
   auto_sync_enabled: true,
   auto_sync_interval_secs: 60,
@@ -243,13 +245,13 @@ export async function syncNow(serverUrl: string): Promise<{ pushed: number; pull
   return { pushed: 0, pulled: 0, server_sequence: 0 };
 }
 
-export async function renderMemoPreview(body: string, format: RenderFormat): Promise<RenderMemoOutput> {
-  if (isTauri) return invoke("render_memo_preview", { input: { body, format } });
+export async function renderMemoPreview(body: string, format: RenderFormat, template: RenderTemplate): Promise<RenderMemoOutput> {
+  if (isTauri) return invoke("render_memo_preview", { input: { body, format, template } });
   throw new Error("Typst renderer is available in the desktop app");
 }
 
-export async function renderMemoPreviewAsset(body: string, format: RenderFormat): Promise<RenderMemoAssetOutput> {
-  if (isTauri) return invoke("render_memo_preview_asset", { input: { body, format } });
+export async function renderMemoPreviewAsset(body: string, format: RenderFormat, template: RenderTemplate): Promise<RenderMemoAssetOutput> {
+  if (isTauri) return invoke("render_memo_preview_asset", { input: { body, format, template } });
   throw new Error("Typst renderer is available in the desktop app");
 }
 

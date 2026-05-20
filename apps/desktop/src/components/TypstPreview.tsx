@@ -1,26 +1,28 @@
 import { lazy, memo, Suspense, useEffect, useRef, useState } from "react";
 import { isDesktopApp, renderMemoPreview, renderMemoPreviewAsset } from "../tauri";
-import type { RenderFormat, RenderPageAssetOutput } from "../types";
+import type { PreviewRenderPath, RenderFormat, RenderPageAssetOutput, RenderTemplate } from "../types";
 
 const MarkdownView = lazy(() => import("../MarkdownView"));
 const PREVIEW_CACHE_MAX_ENTRIES = 18;
 const PREVIEW_CACHE_MAX_BYTES = 12 * 1024 * 1024;
 
 type RenderState =
-  | { kind: "idle" | "loading" }
+  | { kind: "idle" | "loading" | "markdown" }
   | {
       kind: "ready";
       svg?: string;
       url?: string;
       elapsedMs: number;
       cached: boolean;
-      transport: "asset" | "ipc";
+      transport: "asset" | "inline";
       bytes?: number;
       widthPt?: number;
       heightPt?: number;
-      pages?: RenderPageAssetOutput[];
+      pages?: PreviewPage[];
     }
   | { kind: "fallback"; message: string };
+
+type PreviewPage = RenderPageAssetOutput & { svg?: string };
 
 type CachedPreview = {
   url: string;
@@ -28,7 +30,7 @@ type CachedPreview = {
   bytes: number;
   widthPt: number;
   heightPt: number;
-  pages: RenderPageAssetOutput[];
+  pages: PreviewPage[];
 };
 
 const previewCache = new Map<string, CachedPreview>();
@@ -87,20 +89,31 @@ function debounceForBody(body: string) {
   return 160;
 }
 
-function TypstPreviewView({ body, format }: { body: string; format: RenderFormat }) {
+function TypstPreviewView({
+  body,
+  format,
+  renderPath,
+  template,
+}: {
+  body: string;
+  format: RenderFormat;
+  renderPath: PreviewRenderPath;
+  template: RenderTemplate;
+}) {
   const [state, setState] = useState<RenderState>({ kind: "idle" });
   const requestIdRef = useRef(0);
+  const effectivePath = renderPath === "auto" ? "typst-inline" : renderPath;
 
   useEffect(() => {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
-    if (!isDesktopApp) {
-      setState({ kind: "fallback", message: "Web preview uses React Markdown" });
+    if (!isDesktopApp || effectivePath === "markdown") {
+      setState({ kind: "markdown" });
       return;
     }
-    const key = previewCacheKey(body, format);
+    const key = `${effectivePath}\0${template}\0${previewCacheKey(body, format)}`;
     const cachedPreview = getCachedPreview(key);
-    if (cachedPreview) {
+    if (effectivePath === "typst-asset" && cachedPreview) {
       setState({
         kind: "ready",
         url: cachedPreview.url,
@@ -119,43 +132,46 @@ function TypstPreviewView({ body, format }: { body: string; format: RenderFormat
     const handle = window.setTimeout(() => {
       setState((current) => (current.kind === "ready" ? current : { kind: "loading" }));
       void (async () => {
-        try {
-          const asset = await renderMemoPreviewAsset(body, format);
-          if (!cancelled && requestIdRef.current === requestId) {
-            putCachedPreview(key, {
-              url: asset.url,
-              elapsedMs: asset.elapsed_ms,
-              bytes: asset.bytes,
-              widthPt: asset.width_pt,
-              heightPt: asset.height_pt,
-              pages: asset.pages,
-            });
-            setState({
-              kind: "ready",
-              url: asset.url,
-              elapsedMs: asset.elapsed_ms,
-              cached: asset.cached,
-              transport: "asset",
-              bytes: asset.bytes,
-              widthPt: asset.width_pt,
-              heightPt: asset.height_pt,
-              pages: asset.pages,
-            });
+        if (effectivePath === "typst-asset") {
+          try {
+            const asset = await renderMemoPreviewAsset(body, format, template);
+            const pages = await fetchPreviewPages(asset.pages.length ? asset.pages : [{ index: 0, url: asset.url, width_pt: asset.width_pt, height_pt: asset.height_pt, bytes: asset.bytes }]);
+            if (!cancelled && requestIdRef.current === requestId) {
+              putCachedPreview(key, {
+                url: asset.url,
+                elapsedMs: asset.elapsed_ms,
+                bytes: asset.bytes,
+                widthPt: asset.width_pt,
+                heightPt: asset.height_pt,
+                pages,
+              });
+              setState({
+                kind: "ready",
+                url: asset.url,
+                elapsedMs: asset.elapsed_ms,
+                cached: asset.cached,
+                transport: "asset",
+                bytes: asset.bytes,
+                widthPt: asset.width_pt,
+                heightPt: asset.height_pt,
+                pages,
+              });
+            }
+            return;
+          } catch {
+            // Fall back to the inline SVG path if the asset protocol cannot be fetched.
           }
-          return;
-        } catch {
-          // Fall back to the legacy IPC SVG path on platforms where the custom protocol is unavailable.
         }
 
         try {
-          const output = await renderMemoPreview(body, format);
+          const output = await renderMemoPreview(body, format, template);
           if (!cancelled && requestIdRef.current === requestId) {
             setState({
               kind: "ready",
               svg: output.svg,
               elapsedMs: output.elapsed_ms,
               cached: output.cached,
-              transport: "ipc",
+              transport: "inline",
               bytes: output.svg.length,
               widthPt: output.width_pt,
               heightPt: output.height_pt,
@@ -172,7 +188,7 @@ function TypstPreviewView({ body, format }: { body: string; format: RenderFormat
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [body, format]);
+  }, [body, effectivePath, format, template]);
 
   if (state.kind === "ready") {
     return (
@@ -207,6 +223,18 @@ function TypstPreviewView({ body, format }: { body: string; format: RenderFormat
   );
 }
 
+async function fetchPreviewPages(pages: RenderPageAssetOutput[]): Promise<PreviewPage[]> {
+  return Promise.all(
+    pages.map(async (page) => ({
+      ...page,
+      svg: await fetch(page.url, { cache: "force-cache" }).then((response) => {
+        if (!response.ok) throw new Error(`Preview page ${page.index + 1} failed: ${response.status}`);
+        return response.text();
+      }),
+    })),
+  );
+}
+
 function PreviewAsset({
   heightPt,
   onExpired,
@@ -216,25 +244,34 @@ function PreviewAsset({
 }: {
   heightPt?: number;
   onExpired: () => void;
-  pages?: RenderPageAssetOutput[];
+  pages?: PreviewPage[];
   url: string;
   widthPt?: number;
 }) {
   const visiblePages = pages?.length ? pages : [{ index: 0, url, width_pt: widthPt ?? 480, height_pt: heightPt ?? 640, bytes: 0 }];
   return (
     <div className="typst-preview-pages">
-      {visiblePages.map((page) => (
-        <img
-          key={`${page.index}:${page.url}`}
-          alt={`Typst preview page ${page.index + 1}`}
-          className="typst-preview-asset"
-          decoding="async"
-          loading={page.index === 0 ? "eager" : "lazy"}
-          onError={onExpired}
-          src={page.url}
-          style={{ aspectRatio: `${Math.max(page.width_pt, 1)} / ${Math.max(page.height_pt, 1)}` }}
-        />
-      ))}
+      {visiblePages.map((page) =>
+        "svg" in page && typeof page.svg === "string" ? (
+          <div
+            key={`${page.index}:${page.url}`}
+            className="typst-preview-asset"
+            dangerouslySetInnerHTML={{ __html: page.svg }}
+            style={{ aspectRatio: `${Math.max(page.width_pt, 1)} / ${Math.max(page.height_pt, 1)}` }}
+          />
+        ) : (
+          <img
+            key={`${page.index}:${page.url}`}
+            alt={`Typst preview page ${page.index + 1}`}
+            className="typst-preview-asset"
+            decoding="async"
+            loading={page.index === 0 ? "eager" : "lazy"}
+            onError={onExpired}
+            src={page.url}
+            style={{ aspectRatio: `${Math.max(page.width_pt, 1)} / ${Math.max(page.height_pt, 1)}` }}
+          />
+        ),
+      )}
     </div>
   );
 }

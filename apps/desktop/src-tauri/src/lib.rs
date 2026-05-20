@@ -91,6 +91,10 @@ struct AppSettings {
     #[serde(default = "default_settings_shortcut")]
     settings_shortcut: String,
     writing_mode: String,
+    #[serde(default = "default_preview_render_path")]
+    preview_render_path: String,
+    #[serde(default = "default_preview_template")]
+    preview_template: String,
     compact_sidebar_on_start: bool,
     #[serde(default = "default_auto_sync_enabled")]
     auto_sync_enabled: bool,
@@ -106,6 +110,14 @@ fn default_settings_shortcut() -> String {
 
 fn default_auto_sync_enabled() -> bool {
     true
+}
+
+fn default_preview_render_path() -> String {
+    "typst-inline".to_string()
+}
+
+fn default_preview_template() -> String {
+    "literary".to_string()
 }
 
 fn default_auto_sync_interval_secs() -> u64 {
@@ -124,6 +136,8 @@ impl Default for AppSettings {
             clipboard_capture_shortcut: "Ctrl+Shift+Alt+KeyV".to_string(),
             settings_shortcut: default_settings_shortcut(),
             writing_mode: "split".to_string(),
+            preview_render_path: default_preview_render_path(),
+            preview_template: default_preview_template(),
             compact_sidebar_on_start: false,
             auto_sync_enabled: default_auto_sync_enabled(),
             auto_sync_interval_secs: default_auto_sync_interval_secs(),
@@ -498,6 +512,7 @@ fn preview_protocol_response(app: &tauri::AppHandle, path: &str) -> tauri::http:
             tauri::http::header::CACHE_CONTROL,
             "private, max-age=300, stale-while-revalidate=30",
         )
+        .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
         .body(svg.into_bytes())
         .unwrap_or_else(|error| {
             preview_protocol_error(
@@ -1117,6 +1132,19 @@ fn validate_settings(settings: &AppSettings) -> Result<(), String> {
     match settings.writing_mode.as_str() {
         "split" | "edit" | "preview" => {}
         _ => return Err("Writing mode must be split, edit, or preview".to_string()),
+    }
+    match settings.preview_render_path.as_str() {
+        "auto" | "typst-inline" | "typst-asset" | "markdown" => {}
+        _ => {
+            return Err(
+                "Preview render path must be auto, typst-inline, typst-asset, or markdown"
+                    .to_string(),
+            )
+        }
+    }
+    match settings.preview_template.as_str() {
+        "literary" | "compact" | "technical" => {}
+        _ => return Err("Preview template must be literary, compact, or technical".to_string()),
     }
     if !(15..=3600).contains(&settings.auto_sync_interval_secs) {
         return Err("Auto sync interval must be between 15 and 3600 seconds".to_string());

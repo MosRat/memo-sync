@@ -70,6 +70,8 @@ export interface AppSettings {
   clipboard_capture_shortcut: string;
   settings_shortcut: string;
   writing_mode: "split" | "edit" | "preview";
+  preview_render_path: PreviewRenderPath;
+  preview_template: RenderTemplate;
   compact_sidebar_on_start: boolean;
   auto_sync_enabled: boolean;
   auto_sync_interval_secs: number;
@@ -85,6 +87,8 @@ export interface ShortcutCheckResult {
 }
 
 export type RenderFormat = "markdown" | "typst";
+export type PreviewRenderPath = "auto" | "typst-inline" | "typst-asset" | "markdown";
+export type RenderTemplate = "literary" | "compact" | "technical";
 
 export interface RenderMemoOutput {
   svg: string;
