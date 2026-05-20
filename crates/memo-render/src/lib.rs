@@ -10,7 +10,7 @@ use typst::foundations::{Dict, IntoValue};
 use typst::layout::{Abs, PagedDocument};
 use typst_as_lib::{typst_kit_options::TypstKitFontOptions, TypstEngine, TypstTemplateMainFile};
 
-const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v3";
+const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v4";
 const RENDER_MAIN_TEMPLATE: &str = r#"#import sys: inputs
 #eval(inputs.source, mode: "markup")
 "#;
@@ -272,23 +272,23 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
     let prelude = match template {
         RenderTemplate::Literary => {
             r##"
-#set page(width: 340pt, height: auto, margin: (x: 18pt, y: 20pt))
-#set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Microsoft YaHei", "New Computer Modern"), size: 14.2pt, lang: "zh", fill: rgb("#211f1b"))
+#set page(width: 320pt, height: auto, margin: (x: 16pt, y: 18pt))
+#set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Microsoft YaHei", "New Computer Modern"), size: 14.8pt, lang: "zh", fill: rgb("#211f1b"))
 #set par(leading: 0.76em, justify: false, spacing: 0.58em)
 #show heading: it => block(above: 0.62em, below: 0.32em, text(weight: 720, fill: rgb("#171512"), it))
 #show raw: it => block(
   fill: rgb("#20261f"),
   radius: 5pt,
-  inset: 10pt,
+  inset: 9pt,
   width: 100%,
-  text(font: ("Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 10.4pt, fill: rgb("#eaf1e4"), it)
+  text(font: ("Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 10.7pt, fill: rgb("#eaf1e4"), it)
 )
 "##
         }
         RenderTemplate::Compact => {
             r##"
-#set page(width: 332pt, height: auto, margin: (x: 16pt, y: 16pt))
-#set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 12.8pt, lang: "zh", fill: rgb("#27231f"))
+#set page(width: 304pt, height: auto, margin: (x: 14pt, y: 15pt))
+#set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 13.2pt, lang: "zh", fill: rgb("#27231f"))
 #set par(leading: 0.58em, justify: false, spacing: 0.32em)
 #show heading: it => block(above: 0.38em, below: 0.18em, text(weight: 720, fill: rgb("#24211d"), it))
 #show raw: it => block(
@@ -302,8 +302,8 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
         }
         RenderTemplate::Technical => {
             r##"
-#set page(width: 348pt, height: auto, margin: (x: 18pt, y: 18pt))
-#set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 13.2pt, lang: "zh", fill: rgb("#20231f"))
+#set page(width: 328pt, height: auto, margin: (x: 16pt, y: 16pt))
+#set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 13.8pt, lang: "zh", fill: rgb("#20231f"))
 #set par(leading: 0.64em, justify: false, spacing: 0.4em)
 #show heading: it => block(above: 0.5em, below: 0.24em, text(weight: 740, fill: rgb("#1e2520"), it))
 #show raw: it => block(

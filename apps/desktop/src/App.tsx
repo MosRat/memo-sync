@@ -1180,7 +1180,7 @@ function WorkbenchApp() {
           />
         </section>
 
-        <section className="editor-pane">
+        <section className={`editor-pane editor-${mode}`}>
           {activeMemo ? (
             <>
               <div className="editor-header">
@@ -1276,7 +1276,7 @@ function WorkbenchApp() {
                   />
                 )}
                 {mode !== "edit" && (
-                  <article className="markdown">
+                  <article className="markdown preview-surface">
                     <TypstPreview
                       body={activeMemo.body_md}
                       format={activeMemo.tags.includes("typst") ? "typst" : "markdown"}
