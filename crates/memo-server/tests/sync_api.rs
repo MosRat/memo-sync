@@ -8,7 +8,7 @@ use memo_core::{
     RepositoryKind, SyncOperation, SyncOperationKind, DEFAULT_PULL_LIMIT, SYNC_PROTOCOL_VERSION,
 };
 use memo_server::{open_pool, router, state};
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Deserialize};
 use tower::ServiceExt;
 
 #[tokio::test]
@@ -212,12 +212,79 @@ async fn rejects_unsupported_protocol_version() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
+#[tokio::test]
+async fn wait_reports_existing_or_new_sequence_changes() {
+    let pool = open_pool("sqlite::memory:").await.unwrap();
+    let app = router(state(pool));
+    let repo = Repository::new("Work", RepositoryKind::Persistent, "#cc785c");
+    let operation = SyncOperation::new(
+        "test-device",
+        HybridLogicalClock {
+            wall_time_ms: 300,
+            counter: 0,
+        },
+        SyncOperationKind::UpsertMemo(Memo::new(repo.id, "Wait", "Body")),
+    );
+
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            "/api/v1/sync/push",
+            &PushRequest {
+                protocol_version: SYNC_PROTOCOL_VERSION,
+                device_id: "test-device".to_string(),
+                client: None,
+                operations: vec![operation],
+            },
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .clone()
+        .oneshot(get_request(
+            "/api/v1/sync/wait?protocol_version=1&since_sequence=0&timeout_ms=100",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let changed: WaitResponse = read_json(response).await;
+    assert!(changed.changed);
+    assert_eq!(changed.server_sequence, 1);
+
+    let response = app
+        .oneshot(get_request(
+            "/api/v1/sync/wait?protocol_version=1&since_sequence=1&timeout_ms=100",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let unchanged: WaitResponse = read_json(response).await;
+    assert!(!unchanged.changed);
+    assert_eq!(unchanged.server_sequence, 1);
+}
+
+#[derive(Deserialize)]
+struct WaitResponse {
+    changed: bool,
+    server_sequence: i64,
+}
+
 fn json_request<T: serde::Serialize>(uri: &str, body: &T) -> Request<Body> {
     Request::builder()
         .method("POST")
         .uri(uri)
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_vec(body).unwrap()))
+        .unwrap()
+}
+
+fn get_request(uri: &str) -> Request<Body> {
+    Request::builder()
+        .method("GET")
+        .uri(uri)
+        .body(Body::empty())
         .unwrap()
 }
 

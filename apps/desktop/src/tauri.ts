@@ -41,6 +41,7 @@ const defaultSettings: AppSettings = {
   compact_sidebar_on_start: false,
   auto_sync_enabled: true,
   auto_sync_interval_secs: 60,
+  realtime_sync_enabled: true,
 };
 
 const demoRepo: Repository = {

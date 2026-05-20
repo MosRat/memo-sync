@@ -1,15 +1,15 @@
 use axum::{
-    extract::{ws::WebSocketUpgrade, State},
+    extract::{ws::WebSocketUpgrade, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
 use memo_core::{
-    PullRequest, PullResponse, PushRequest, PushResponse, ServerOperation, SyncOperation,
-    SYNC_PROTOCOL_VERSION,
+    default_sync_protocol_version, PullRequest, PullResponse, PushRequest, PushResponse,
+    ServerOperation, SyncOperation, SYNC_PROTOCOL_VERSION,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
 use std::{path::Path, time::Duration};
 use tokio::sync::broadcast;
@@ -69,6 +69,7 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/api/v1/sync/push", post(push))
         .route("/api/v1/sync/pull", post(pull))
+        .route("/api/v1/sync/wait", get(wait_for_change))
         .route("/api/v1/events", get(events))
         .layer(CorsLayer::permissive())
         .layer(CompressionLayer::new())
@@ -151,6 +152,26 @@ struct Health {
     ok: bool,
     server_sequence: i64,
     protocol_version: u16,
+}
+
+#[derive(Deserialize)]
+struct WaitQuery {
+    #[serde(default = "default_sync_protocol_version")]
+    protocol_version: u16,
+    since_sequence: i64,
+    #[serde(default = "default_wait_timeout_ms")]
+    timeout_ms: u64,
+}
+
+#[derive(Serialize)]
+struct WaitResponse {
+    changed: bool,
+    server_sequence: i64,
+    protocol_version: u16,
+}
+
+fn default_wait_timeout_ms() -> u64 {
+    25_000
 }
 
 async fn push(
@@ -266,6 +287,46 @@ async fn pull(
         operations,
         server_sequence,
         has_more,
+    }))
+}
+
+async fn wait_for_change(
+    State(state): State<AppState>,
+    Query(query): Query<WaitQuery>,
+) -> Result<Json<WaitResponse>, ServerError> {
+    ensure_protocol(query.protocol_version)?;
+    let current = latest_sequence(&state.pool).await?;
+    if current > query.since_sequence {
+        return Ok(Json(WaitResponse {
+            changed: true,
+            server_sequence: current,
+            protocol_version: SYNC_PROTOCOL_VERSION,
+        }));
+    }
+
+    let mut rx = state.tx.subscribe();
+    let timeout_ms = query.timeout_ms.clamp(100, 60_000);
+    let event = tokio::time::timeout(Duration::from_millis(timeout_ms), async move {
+        loop {
+            match rx.recv().await {
+                Ok(event) if event.server_sequence > query.since_sequence => return Some(event),
+                Ok(_) => continue,
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    })
+    .await
+    .ok()
+    .flatten();
+    let sequence = match event {
+        Some(event) => event.server_sequence,
+        None => latest_sequence(&state.pool).await?,
+    };
+    Ok(Json(WaitResponse {
+        changed: sequence > query.since_sequence,
+        server_sequence: sequence,
+        protocol_version: SYNC_PROTOCOL_VERSION,
     }))
 }
 

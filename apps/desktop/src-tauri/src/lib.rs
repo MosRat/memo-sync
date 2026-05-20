@@ -71,6 +71,8 @@ struct AppSettings {
     auto_sync_enabled: bool,
     #[serde(default = "default_auto_sync_interval_secs")]
     auto_sync_interval_secs: u64,
+    #[serde(default = "default_realtime_sync_enabled")]
+    realtime_sync_enabled: bool,
 }
 
 fn default_settings_shortcut() -> String {
@@ -85,6 +87,10 @@ fn default_auto_sync_interval_secs() -> u64 {
     60
 }
 
+fn default_realtime_sync_enabled() -> bool {
+    true
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -96,6 +102,7 @@ impl Default for AppSettings {
             compact_sidebar_on_start: false,
             auto_sync_enabled: default_auto_sync_enabled(),
             auto_sync_interval_secs: default_auto_sync_interval_secs(),
+            realtime_sync_enabled: default_realtime_sync_enabled(),
         }
     }
 }
@@ -145,6 +152,13 @@ pub fn run() {
                 sync_lock: sync_lock.clone(),
             });
             spawn_background_sync(
+                app.handle().clone(),
+                store.clone(),
+                device_id.clone(),
+                settings.clone(),
+                sync_lock.clone(),
+            );
+            spawn_realtime_sync(
                 app.handle().clone(),
                 store,
                 device_id,
@@ -403,8 +417,8 @@ fn spawn_background_sync(
             .unwrap_or_else(Instant::now);
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
-            let snapshot = match settings.lock() {
-                Ok(settings) => settings.clone(),
+            let snapshot = match settings_snapshot(&settings) {
+                Ok(settings) => settings,
                 Err(error) => {
                     let _ = app.emit(
                         EVENT_SYNC_COMPLETED,
@@ -413,7 +427,7 @@ fn spawn_background_sync(
                             pushed: 0,
                             pulled: 0,
                             server_sequence: 0,
-                            message: error.to_string(),
+                            message: error,
                             background: true,
                         },
                     );
@@ -427,33 +441,120 @@ fn spawn_background_sync(
             if last_attempt.elapsed() < interval {
                 continue;
             }
-            let Ok(_guard) = sync_lock.try_lock() else {
-                continue;
-            };
             last_attempt = Instant::now();
-            match store.sync_now(&snapshot.server_url, &device_id).await {
-                Ok(summary) => {
-                    emit_sync_completed(&app, &summary, true, None);
-                    if summary.pulled > 0 {
-                        emit_memos_changed(&app, None);
-                    }
-                }
+            try_background_sync(
+                &app,
+                &store,
+                &device_id,
+                &snapshot.server_url,
+                &sync_lock,
+                None,
+            )
+            .await;
+        }
+    });
+}
+
+fn spawn_realtime_sync(
+    app: tauri::AppHandle,
+    store: LocalStore,
+    device_id: String,
+    settings: Arc<Mutex<AppSettings>>,
+    sync_lock: Arc<AsyncMutex<()>>,
+) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let snapshot = match settings_snapshot(&settings) {
+                Ok(settings) => settings,
                 Err(error) => {
-                    let _ = app.emit(
-                        EVENT_SYNC_COMPLETED,
-                        SyncCompletedPayload {
-                            ok: false,
-                            pushed: 0,
-                            pulled: 0,
-                            server_sequence: 0,
-                            message: error.to_string(),
-                            background: true,
-                        },
-                    );
+                    emit_background_sync_error(&app, error);
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    continue;
+                }
+            };
+            if !snapshot.auto_sync_enabled || !snapshot.realtime_sync_enabled {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                continue;
+            }
+            let stats = match store.stats().await {
+                Ok(stats) => stats,
+                Err(error) => {
+                    emit_background_sync_error(&app, error.to_string());
+                    tokio::time::sleep(Duration::from_secs(15)).await;
+                    continue;
+                }
+            };
+            match store
+                .wait_for_remote_change(
+                    &snapshot.server_url,
+                    stats.last_server_sequence,
+                    Duration::from_secs(45),
+                )
+                .await
+            {
+                Ok(change)
+                    if change.changed && change.server_sequence > stats.last_server_sequence =>
+                {
+                    try_background_sync(
+                        &app,
+                        &store,
+                        &device_id,
+                        &snapshot.server_url,
+                        &sync_lock,
+                        Some("Realtime sync completed".to_string()),
+                    )
+                    .await;
+                }
+                Ok(_) => {}
+                Err(_) => {
+                    tokio::time::sleep(Duration::from_secs(15)).await;
                 }
             }
         }
     });
+}
+
+fn settings_snapshot(settings: &Arc<Mutex<AppSettings>>) -> Result<AppSettings, String> {
+    settings
+        .lock()
+        .map_err(to_string)
+        .map(|settings| settings.clone())
+}
+
+async fn try_background_sync(
+    app: &tauri::AppHandle,
+    store: &LocalStore,
+    device_id: &str,
+    server_url: &str,
+    sync_lock: &Arc<AsyncMutex<()>>,
+    message: Option<String>,
+) {
+    let Ok(_guard) = sync_lock.try_lock() else {
+        return;
+    };
+    match store.sync_now(server_url, device_id).await {
+        Ok(summary) => {
+            emit_sync_completed(app, &summary, true, message);
+            if summary.pulled > 0 {
+                emit_memos_changed(app, None);
+            }
+        }
+        Err(error) => emit_background_sync_error(app, error.to_string()),
+    }
+}
+
+fn emit_background_sync_error(app: &tauri::AppHandle, message: String) {
+    let _ = app.emit(
+        EVENT_SYNC_COMPLETED,
+        SyncCompletedPayload {
+            ok: false,
+            pushed: 0,
+            pulled: 0,
+            server_sequence: 0,
+            message,
+            background: true,
+        },
+    );
 }
 
 fn emit_sync_completed(

@@ -54,6 +54,14 @@ struct HealthResponse {
     protocol_version: u16,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct WaitForChangeResponse {
+    pub changed: bool,
+    pub server_sequence: i64,
+    #[serde(default = "default_sync_protocol_version")]
+    pub protocol_version: u16,
+}
+
 impl LocalStore {
     pub async fn open(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let options = SqliteConnectOptions::new()
@@ -209,6 +217,39 @@ impl LocalStore {
             }
         }
         Ok(())
+    }
+
+    pub async fn wait_for_remote_change(
+        &self,
+        server_url: &str,
+        since_sequence: i64,
+        timeout: Duration,
+    ) -> anyhow::Result<WaitForChangeResponse> {
+        let timeout_ms = timeout.as_millis().clamp(1_000, 60_000);
+        let client = reqwest::Client::builder()
+            .timeout(timeout + Duration::from_secs(8))
+            .pool_idle_timeout(Duration::from_secs(30))
+            .build()?;
+        let response: WaitForChangeResponse = client
+            .get(format!(
+                "{}/api/v1/sync/wait?protocol_version={}&since_sequence={}&timeout_ms={}",
+                server_url.trim_end_matches('/'),
+                SYNC_PROTOCOL_VERSION,
+                since_sequence,
+                timeout_ms
+            ))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        anyhow::ensure!(
+            response.protocol_version == SYNC_PROTOCOL_VERSION,
+            "sync protocol mismatch: client {}, server {}",
+            SYNC_PROTOCOL_VERSION,
+            response.protocol_version
+        );
+        Ok(response)
     }
 
     pub async fn sync_now(&self, server_url: &str, device_id: &str) -> anyhow::Result<SyncSummary> {

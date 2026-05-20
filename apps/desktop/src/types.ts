@@ -64,6 +64,7 @@ export interface AppSettings {
   compact_sidebar_on_start: boolean;
   auto_sync_enabled: boolean;
   auto_sync_interval_secs: number;
+  realtime_sync_enabled: boolean;
 }
 
 export interface ShortcutCheckResult {

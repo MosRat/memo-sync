@@ -67,6 +67,7 @@ const defaultSettings: AppSettings = {
   compact_sidebar_on_start: false,
   auto_sync_enabled: true,
   auto_sync_interval_secs: 60,
+  realtime_sync_enabled: true,
 };
 
 const emptyStats: LocalStats = {
@@ -1047,6 +1048,15 @@ function AppDialog({
                 onChange={(event) => setDraft({ ...draft, auto_sync_enabled: event.target.checked })}
               />
               <span>Background sync</span>
+            </label>
+            <label className="toggle setting-toggle">
+              <input
+                type="checkbox"
+                checked={draft.realtime_sync_enabled}
+                onChange={(event) => setDraft({ ...draft, realtime_sync_enabled: event.target.checked })}
+                disabled={!draft.auto_sync_enabled}
+              />
+              <span>Realtime remote wakeup</span>
             </label>
             <label>
               <span>Background sync interval</span>
