@@ -18,6 +18,7 @@ React editor
   -> spawn_blocking Typst compile on miss
   -> Typst/cmarker -> merged SVG + page SVGs in Rust cache
   -> React loads memo-preview://localhost/page/<cacheKey>/<page>.svg
+     (Windows/WebView2 uses http://memo-preview.localhost/page/<cacheKey>/<page>.svg)
 ```
 
 Implemented safeguards:
@@ -30,6 +31,7 @@ Implemented safeguards:
 - cache key: `format + body`
 - custom `memo-preview://` protocol: SVG is loaded as a WebView resource instead of being serialized through JSON IPC
 - page asset protocol: pages can be loaded independently through `memo-preview://localhost/page/<cacheKey>/<page>.svg`
+- Windows URL mapping: WebView2 resolves the protocol through `http://memo-preview.localhost/...`
 - page metadata: render metadata includes page dimensions so the frontend can reserve stable preview space
 - legacy SVG IPC fallback: keeps preview available if a platform rejects the asset path
 - cmarker test: ignored by default but manually runnable because package fetch may use network

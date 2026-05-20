@@ -683,6 +683,9 @@ textarea:focus {
   font-family: var(--font-serif);
   font-size: 15px;
   font-weight: 720;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .memo-row p {
@@ -806,27 +809,35 @@ textarea:focus {
 }
 
 .title-input {
+  display: block;
   width: 100%;
   max-width: 100%;
+  min-width: 0;
   border: 0;
   background: transparent;
   box-shadow: none;
   padding: 0;
   border-radius: 0;
   font-family: var(--font-serif);
-  font-size: 30px;
+  font-size: clamp(24px, 2.1vw, 30px);
   font-weight: 720;
   line-height: 1.18;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .editor-header {
   align-items: flex-start;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  min-width: 0;
 }
 
 .editor-header > div:first-child {
   min-width: 0;
-  flex: 1 1 280px;
+  overflow: hidden;
 }
 
 .toolbar {

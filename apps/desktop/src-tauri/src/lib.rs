@@ -410,11 +410,22 @@ fn asset_output_from_metadata(metadata: RenderMemoMetadata) -> RenderMemoAssetOu
 }
 
 fn preview_asset_url(cache_key: &str) -> String {
-    format!("{PREVIEW_PROTOCOL}://localhost/svg/{cache_key}.svg")
+    preview_protocol_url(&format!("/svg/{cache_key}.svg"))
 }
 
 fn preview_page_url(cache_key: &str, page_index: usize) -> String {
-    format!("{PREVIEW_PROTOCOL}://localhost/page/{cache_key}/{page_index}.svg")
+    preview_protocol_url(&format!("/page/{cache_key}/{page_index}.svg"))
+}
+
+fn preview_protocol_url(path: &str) -> String {
+    #[cfg(any(target_os = "windows", target_os = "android"))]
+    {
+        format!("http://{PREVIEW_PROTOCOL}.localhost{path}")
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "android")))]
+    {
+        format!("{PREVIEW_PROTOCOL}://localhost{path}")
+    }
 }
 
 enum PreviewPath<'a> {
