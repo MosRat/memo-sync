@@ -5,7 +5,7 @@ use std::{
     collections::{HashMap, VecDeque},
     time::Instant,
 };
-use typst::layout::Abs;
+use typst::layout::{Abs, PagedDocument};
 use typst_as_lib::TypstEngine;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,6 +28,39 @@ pub struct RenderMemoOutput {
     pub elapsed_ms: u128,
     pub cache_key: String,
     pub cached: bool,
+    pub width_pt: f64,
+    pub height_pt: f64,
+    pub pages: Vec<RenderPageOutput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderPageOutput {
+    pub index: usize,
+    pub width_pt: f64,
+    pub height_pt: f64,
+    pub bytes: usize,
+    #[serde(skip_serializing, default)]
+    pub svg: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderMemoMetadata {
+    pub diagnostics: Vec<String>,
+    pub elapsed_ms: u128,
+    pub cache_key: String,
+    pub cached: bool,
+    pub bytes: usize,
+    pub width_pt: f64,
+    pub height_pt: f64,
+    pub pages: Vec<RenderPageMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderPageMetadata {
+    pub index: usize,
+    pub width_pt: f64,
+    pub height_pt: f64,
+    pub bytes: usize,
 }
 
 pub fn render_memo(input: RenderMemoInput) -> anyhow::Result<RenderMemoOutput> {
@@ -37,25 +70,76 @@ pub fn render_memo(input: RenderMemoInput) -> anyhow::Result<RenderMemoOutput> {
         RenderFormat::Markdown => markdown_source().to_string(),
         RenderFormat::Typst => typst_source(&input.body),
     };
-    let mut builder = TypstEngine::builder().with_static_source_file_resolver([("main.typ", source.as_str())]);
+    let mut builder =
+        TypstEngine::builder().with_static_source_file_resolver([("main.typ", source.as_str())]);
     if matches!(input.format, RenderFormat::Markdown) {
         builder = builder.with_static_file_resolver([("memo.md", input.body.as_bytes())]);
     }
-    let engine = builder
-        .with_package_file_resolver()
-        .build();
-    let document = engine
+    let engine = builder.with_package_file_resolver().build();
+    let document: PagedDocument = engine
         .compile("main.typ")
         .output
         .map_err(|error| anyhow!("Typst compile failed: {error:?}"))?;
-    let svg = typst_svg::svg_merged(&document, Abs::pt(0.0));
+    let pages = document
+        .pages
+        .iter()
+        .enumerate()
+        .map(|(index, page)| {
+            let svg = typst_svg::svg(page);
+            RenderPageOutput {
+                index,
+                width_pt: page.frame.width().to_pt(),
+                height_pt: page.frame.height().to_pt(),
+                bytes: svg.len(),
+                svg,
+            }
+        })
+        .collect::<Vec<_>>();
+    let svg = if pages.len() == 1 {
+        pages[0].svg.clone()
+    } else {
+        typst_svg::svg_merged(&document, Abs::pt(0.0))
+    };
+    let width_pt = pages.iter().map(|page| page.width_pt).fold(0.0, f64::max);
+    let height_pt = pages.iter().map(|page| page.height_pt).sum();
     Ok(RenderMemoOutput {
         svg,
         diagnostics: Vec::new(),
         elapsed_ms: started.elapsed().as_millis(),
         cache_key,
         cached: false,
+        width_pt,
+        height_pt,
+        pages,
     })
+}
+
+impl RenderMemoOutput {
+    pub fn metadata(&self, cached: bool, elapsed_ms: u128) -> RenderMemoMetadata {
+        RenderMemoMetadata {
+            diagnostics: self.diagnostics.clone(),
+            elapsed_ms,
+            cache_key: self.cache_key.clone(),
+            cached,
+            bytes: self.byte_len(),
+            width_pt: self.width_pt,
+            height_pt: self.height_pt,
+            pages: self
+                .pages
+                .iter()
+                .map(|page| RenderPageMetadata {
+                    index: page.index,
+                    width_pt: page.width_pt,
+                    height_pt: page.height_pt,
+                    bytes: page.bytes,
+                })
+                .collect(),
+        }
+    }
+
+    pub fn byte_len(&self) -> usize {
+        self.svg.len() + self.pages.iter().map(|page| page.bytes).sum::<usize>()
+    }
 }
 
 #[derive(Debug)]
@@ -87,14 +171,35 @@ impl RenderCache {
         Some(output)
     }
 
-    pub fn insert(&mut self, output: RenderMemoOutput) {
+    pub fn get_metadata(&mut self, key: &str) -> Option<RenderMemoMetadata> {
+        let cached = self.entries.get(key)?;
+        let metadata = cached.metadata(true, 0);
+        move_to_back(&mut self.order, key);
+        Some(metadata)
+    }
+
+    pub fn get_svg(&mut self, key: &str) -> Option<String> {
+        let cached = self.entries.get(key)?;
+        let svg = cached.svg.clone();
+        move_to_back(&mut self.order, key);
+        Some(svg)
+    }
+
+    pub fn get_page_svg(&mut self, key: &str, index: usize) -> Option<String> {
+        let cached = self.entries.get(key)?;
+        let svg = cached.pages.get(index)?.svg.clone();
+        move_to_back(&mut self.order, key);
+        Some(svg)
+    }
+
+    pub fn insert(&mut self, output: RenderMemoOutput) -> bool {
         let key = output.cache_key.clone();
-        let size = output.svg.len();
+        let size = output.byte_len();
         if size > self.max_bytes {
-            return;
+            return false;
         }
         if let Some(existing) = self.entries.remove(&key) {
-            self.current_bytes = self.current_bytes.saturating_sub(existing.svg.len());
+            self.current_bytes = self.current_bytes.saturating_sub(existing.byte_len());
             self.order.retain(|item| item != &key);
         }
         self.current_bytes += size;
@@ -105,9 +210,10 @@ impl RenderCache {
                 break;
             };
             if let Some(removed) = self.entries.remove(&oldest) {
-                self.current_bytes = self.current_bytes.saturating_sub(removed.svg.len());
+                self.current_bytes = self.current_bytes.saturating_sub(removed.byte_len());
             }
         }
+        true
     }
 
     pub fn len(&self) -> usize {
@@ -194,6 +300,9 @@ mod tests {
             elapsed_ms: 12,
             cache_key: "one".to_string(),
             cached: false,
+            width_pt: 1.0,
+            height_pt: 1.0,
+            pages: Vec::new(),
         };
         let second = RenderMemoOutput {
             svg: "<svg>two</svg>".to_string(),
@@ -201,6 +310,9 @@ mod tests {
             elapsed_ms: 10,
             cache_key: "two".to_string(),
             cached: false,
+            width_pt: 1.0,
+            height_pt: 1.0,
+            pages: Vec::new(),
         };
         cache.insert(first);
         assert!(cache.get("one").unwrap().cached);
@@ -208,6 +320,33 @@ mod tests {
         assert_eq!(cache.len(), 1);
         assert!(cache.get("one").is_none());
         assert!(cache.get("two").is_some());
+    }
+
+    #[test]
+    fn render_cache_serves_metadata_and_page_svg() {
+        let mut cache = RenderCache::new(4, 1024 * 1024);
+        cache.insert(RenderMemoOutput {
+            svg: "<svg>merged</svg>".to_string(),
+            diagnostics: Vec::new(),
+            elapsed_ms: 9,
+            cache_key: "memo".to_string(),
+            cached: false,
+            width_pt: 100.0,
+            height_pt: 80.0,
+            pages: vec![RenderPageOutput {
+                index: 0,
+                width_pt: 100.0,
+                height_pt: 80.0,
+                bytes: 15,
+                svg: "<svg>page</svg>".to_string(),
+            }],
+        });
+
+        let metadata = cache.get_metadata("memo").unwrap();
+        assert!(metadata.cached);
+        assert_eq!(metadata.pages.len(), 1);
+        assert_eq!(cache.get_page_svg("memo", 0).unwrap(), "<svg>page</svg>");
+        assert!(cache.get_page_svg("memo", 1).is_none());
     }
 
     #[test]

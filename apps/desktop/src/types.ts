@@ -92,6 +92,16 @@ export interface RenderMemoOutput {
   elapsed_ms: number;
   cache_key: string;
   cached: boolean;
+  width_pt: number;
+  height_pt: number;
+  pages: RenderPageOutput[];
+}
+
+export interface RenderPageOutput {
+  index: number;
+  width_pt: number;
+  height_pt: number;
+  bytes: number;
 }
 
 export interface RenderMemoAssetOutput {
@@ -100,5 +110,16 @@ export interface RenderMemoAssetOutput {
   elapsed_ms: number;
   cache_key: string;
   cached: boolean;
+  bytes: number;
+  width_pt: number;
+  height_pt: number;
+  pages: RenderPageAssetOutput[];
+}
+
+export interface RenderPageAssetOutput {
+  index: number;
+  url: string;
+  width_pt: number;
+  height_pt: number;
   bytes: number;
 }

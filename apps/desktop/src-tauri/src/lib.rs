@@ -1,7 +1,7 @@
 mod store;
 
 use memo_core::{Memo, MemoFilter, MemoSource, Repository};
-use memo_render::{RenderCache, RenderMemoInput, RenderMemoOutput};
+use memo_render::{RenderCache, RenderMemoInput, RenderMemoMetadata, RenderMemoOutput};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -68,6 +68,18 @@ struct RenderMemoAssetOutput {
     elapsed_ms: u128,
     cache_key: String,
     cached: bool,
+    bytes: usize,
+    width_pt: f64,
+    height_pt: f64,
+    pages: Vec<RenderPageAssetOutput>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RenderPageAssetOutput {
+    index: usize,
+    url: String,
+    width_pt: f64,
+    height_pt: f64,
     bytes: usize,
 }
 
@@ -325,15 +337,26 @@ async fn render_memo_preview_asset(
     state: State<'_, AppState>,
     input: RenderMemoInput,
 ) -> Result<RenderMemoAssetOutput, String> {
-    let output = render_memo_output(&state, input).await?;
-    Ok(RenderMemoAssetOutput {
-        url: preview_asset_url(&output.cache_key),
-        diagnostics: output.diagnostics,
-        elapsed_ms: output.elapsed_ms,
-        cache_key: output.cache_key,
-        cached: output.cached,
-        bytes: output.svg.len(),
-    })
+    let cache_key = memo_render::render_cache_key(&input);
+    if let Some(metadata) = state
+        .render_cache
+        .lock()
+        .map_err(to_string)?
+        .get_metadata(&cache_key)
+    {
+        return Ok(asset_output_from_metadata(metadata));
+    }
+
+    let output = tauri::async_runtime::spawn_blocking(move || memo_render::render_memo(input))
+        .await
+        .map_err(to_string)?
+        .map_err(to_string)?;
+    let metadata = output.metadata(false, output.elapsed_ms);
+    let inserted = state.render_cache.lock().map_err(to_string)?.insert(output);
+    if !inserted {
+        return Err("preview is too large for the asset cache".to_string());
+    }
+    Ok(asset_output_from_metadata(metadata))
 }
 
 async fn render_memo_output(
@@ -341,7 +364,12 @@ async fn render_memo_output(
     input: RenderMemoInput,
 ) -> Result<RenderMemoOutput, String> {
     let cache_key = memo_render::render_cache_key(&input);
-    if let Some(output) = state.render_cache.lock().map_err(to_string)?.get(&cache_key) {
+    if let Some(output) = state
+        .render_cache
+        .lock()
+        .map_err(to_string)?
+        .get(&cache_key)
+    {
         return Ok(output);
     }
     let output = tauri::async_runtime::spawn_blocking(move || memo_render::render_memo(input))
@@ -356,24 +384,76 @@ async fn render_memo_output(
     Ok(output)
 }
 
+fn asset_output_from_metadata(metadata: RenderMemoMetadata) -> RenderMemoAssetOutput {
+    let cache_key = metadata.cache_key;
+    RenderMemoAssetOutput {
+        url: preview_asset_url(&cache_key),
+        diagnostics: metadata.diagnostics,
+        elapsed_ms: metadata.elapsed_ms,
+        cache_key: cache_key.clone(),
+        cached: metadata.cached,
+        bytes: metadata.bytes,
+        width_pt: metadata.width_pt,
+        height_pt: metadata.height_pt,
+        pages: metadata
+            .pages
+            .into_iter()
+            .map(|page| RenderPageAssetOutput {
+                index: page.index,
+                url: preview_page_url(&cache_key, page.index),
+                width_pt: page.width_pt,
+                height_pt: page.height_pt,
+                bytes: page.bytes,
+            })
+            .collect(),
+    }
+}
+
 fn preview_asset_url(cache_key: &str) -> String {
     format!("{PREVIEW_PROTOCOL}://localhost/svg/{cache_key}.svg")
 }
 
-fn preview_key_from_path(path: &str) -> Option<&str> {
-    let key = path.strip_prefix("/svg/")?.strip_suffix(".svg")?;
+fn preview_page_url(cache_key: &str, page_index: usize) -> String {
+    format!("{PREVIEW_PROTOCOL}://localhost/page/{cache_key}/{page_index}.svg")
+}
+
+enum PreviewPath<'a> {
+    Merged { cache_key: &'a str },
+    Page { cache_key: &'a str, index: usize },
+}
+
+fn preview_path(path: &str) -> Option<PreviewPath<'_>> {
+    if let Some(key) = path
+        .strip_prefix("/svg/")
+        .and_then(|path| path.strip_suffix(".svg"))
+    {
+        if is_preview_cache_key(key) {
+            return Some(PreviewPath::Merged { cache_key: key });
+        }
+        return None;
+    }
+
+    let path = path.strip_prefix("/page/")?.strip_suffix(".svg")?;
+    let (key, index) = path.split_once('/')?;
+    if !is_preview_cache_key(key) {
+        return None;
+    }
+    Some(PreviewPath::Page {
+        cache_key: key,
+        index: index.parse().ok()?,
+    })
+}
+
+fn is_preview_cache_key(key: &str) -> bool {
     if key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        Some(key)
+        true
     } else {
-        None
+        false
     }
 }
 
-fn preview_protocol_response(
-    app: &tauri::AppHandle,
-    path: &str,
-) -> tauri::http::Response<Vec<u8>> {
-    let Some(cache_key) = preview_key_from_path(path) else {
+fn preview_protocol_response(app: &tauri::AppHandle, path: &str) -> tauri::http::Response<Vec<u8>> {
+    let Some(preview_path) = preview_path(path) else {
         return preview_protocol_error(tauri::http::StatusCode::BAD_REQUEST, "bad preview path");
     };
     let Some(state) = app.try_state::<AppState>() else {
@@ -382,8 +462,11 @@ fn preview_protocol_response(
             "preview cache is not ready",
         );
     };
-    let output = match state.render_cache.lock() {
-        Ok(mut cache) => cache.get(cache_key),
+    let svg = match state.render_cache.lock() {
+        Ok(mut cache) => match preview_path {
+            PreviewPath::Merged { cache_key } => cache.get_svg(cache_key),
+            PreviewPath::Page { cache_key, index } => cache.get_page_svg(cache_key, index),
+        },
         Err(error) => {
             return preview_protocol_error(
                 tauri::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -391,7 +474,7 @@ fn preview_protocol_response(
             )
         }
     };
-    let Some(output) = output else {
+    let Some(svg) = svg else {
         return preview_protocol_error(tauri::http::StatusCode::NOT_FOUND, "preview expired");
     };
     tauri::http::Response::builder()
@@ -404,16 +487,25 @@ fn preview_protocol_response(
             tauri::http::header::CACHE_CONTROL,
             "private, max-age=300, stale-while-revalidate=30",
         )
-        .body(output.svg.into_bytes())
+        .body(svg.into_bytes())
         .unwrap_or_else(|error| {
-            preview_protocol_error(tauri::http::StatusCode::INTERNAL_SERVER_ERROR, &error.to_string())
+            preview_protocol_error(
+                tauri::http::StatusCode::INTERNAL_SERVER_ERROR,
+                &error.to_string(),
+            )
         })
 }
 
-fn preview_protocol_error(status: tauri::http::StatusCode, message: &str) -> tauri::http::Response<Vec<u8>> {
+fn preview_protocol_error(
+    status: tauri::http::StatusCode,
+    message: &str,
+) -> tauri::http::Response<Vec<u8>> {
     tauri::http::Response::builder()
         .status(status)
-        .header(tauri::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+        .header(
+            tauri::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )
         .body(message.as_bytes().to_vec())
         .expect("preview protocol error response")
 }
@@ -1091,11 +1183,19 @@ mod tests {
     #[test]
     fn preview_protocol_accepts_only_svg_cache_keys() {
         let key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        assert_eq!(
-            preview_key_from_path(&format!("/svg/{key}.svg")),
-            Some(key)
-        );
-        assert!(preview_key_from_path("/svg/not-a-key.svg").is_none());
-        assert!(preview_key_from_path("/other/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.svg").is_none());
+        assert!(matches!(
+            preview_path(&format!("/svg/{key}.svg")),
+            Some(PreviewPath::Merged { cache_key }) if cache_key == key
+        ));
+        assert!(matches!(
+            preview_path(&format!("/page/{key}/2.svg")),
+            Some(PreviewPath::Page { cache_key, index: 2 }) if cache_key == key
+        ));
+        assert!(preview_path("/svg/not-a-key.svg").is_none());
+        assert!(preview_path("/page/not-a-key/0.svg").is_none());
+        assert!(preview_path(
+            "/other/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.svg"
+        )
+        .is_none());
     }
 }

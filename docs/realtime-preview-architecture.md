@@ -16,8 +16,8 @@ React editor
   -> Tauri invoke(render_memo_preview_asset)
   -> Rust render cache lookup
   -> spawn_blocking Typst compile on miss
-  -> Typst/cmarker -> merged SVG in Rust cache
-  -> React loads memo-preview://localhost/svg/<cacheKey>.svg
+  -> Typst/cmarker -> merged SVG + page SVGs in Rust cache
+  -> React loads memo-preview://localhost/page/<cacheKey>/<page>.svg
 ```
 
 Implemented safeguards:
@@ -29,6 +29,8 @@ Implemented safeguards:
 - Rust LRU cache: 96 entries, 24 MiB max SVG bytes
 - cache key: `format + body`
 - custom `memo-preview://` protocol: SVG is loaded as a WebView resource instead of being serialized through JSON IPC
+- page asset protocol: pages can be loaded independently through `memo-preview://localhost/page/<cacheKey>/<page>.svg`
+- page metadata: render metadata includes page dimensions so the frontend can reserve stable preview space
 - legacy SVG IPC fallback: keeps preview available if a platform rejects the asset path
 - cmarker test: ignored by default but manually runnable because package fetch may use network
 
@@ -48,6 +50,7 @@ Implemented now:
 - frontend LRU cache, so toggling edit/preview avoids IPC entirely
 - adaptive debounce by document size
 - asset-backed preview URL, so the hot path avoids large JSON IPC payloads
+- page-backed preview URLs, so long documents can later refresh only changed pages
 
 ### Stage 2: Asset-backed Preview
 
@@ -58,16 +61,27 @@ Implemented baseline:
   "cacheKey": "...",
   "url": "memo-preview://localhost/svg/<cacheKey>.svg",
   "elapsedMs": 42,
-  "cached": false
+  "cached": false,
+  "pages": [
+    {
+      "index": 0,
+      "url": "memo-preview://localhost/page/<cacheKey>/0.svg",
+      "width_pt": 480,
+      "height_pt": 640
+    }
+  ]
 }
 ```
 
 The WebView fetches SVG through a custom protocol. This avoids repeatedly serializing huge SVG strings through JSON IPC and lets the WebView cache/fetch like a normal resource.
 
-Next refinement:
+Implemented refinement:
 
 - return page dimensions with the metadata, so the `<object>` can reserve an exact height before the SVG loads
 - split long documents into page assets: `memo-preview://localhost/page/<cacheKey>/<page>.svg`
+
+Next refinement:
+
 - keep visible pages mounted and refresh only changed page URLs
 
 ### Stage 3: Streaming / Partial Rendering

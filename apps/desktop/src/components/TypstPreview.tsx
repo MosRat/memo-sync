@@ -1,6 +1,6 @@
 import { lazy, memo, Suspense, useEffect, useRef, useState } from "react";
 import { isDesktopApp, renderMemoPreview, renderMemoPreviewAsset } from "../tauri";
-import type { RenderFormat } from "../types";
+import type { RenderFormat, RenderPageAssetOutput } from "../types";
 
 const MarkdownView = lazy(() => import("../MarkdownView"));
 const PREVIEW_CACHE_MAX_ENTRIES = 18;
@@ -16,6 +16,9 @@ type RenderState =
       cached: boolean;
       transport: "asset" | "ipc";
       bytes?: number;
+      widthPt?: number;
+      heightPt?: number;
+      pages?: RenderPageAssetOutput[];
     }
   | { kind: "fallback"; message: string };
 
@@ -23,6 +26,9 @@ type CachedPreview = {
   url: string;
   elapsedMs: number;
   bytes: number;
+  widthPt: number;
+  heightPt: number;
+  pages: RenderPageAssetOutput[];
 };
 
 const previewCache = new Map<string, CachedPreview>();
@@ -102,6 +108,9 @@ function TypstPreviewView({ body, format }: { body: string; format: RenderFormat
         cached: true,
         transport: "asset",
         bytes: cachedPreview.bytes,
+        widthPt: cachedPreview.widthPt,
+        heightPt: cachedPreview.heightPt,
+        pages: cachedPreview.pages,
       });
       return;
     }
@@ -113,7 +122,14 @@ function TypstPreviewView({ body, format }: { body: string; format: RenderFormat
         try {
           const asset = await renderMemoPreviewAsset(body, format);
           if (!cancelled && requestIdRef.current === requestId) {
-            putCachedPreview(key, { url: asset.url, elapsedMs: asset.elapsed_ms, bytes: asset.bytes });
+            putCachedPreview(key, {
+              url: asset.url,
+              elapsedMs: asset.elapsed_ms,
+              bytes: asset.bytes,
+              widthPt: asset.width_pt,
+              heightPt: asset.height_pt,
+              pages: asset.pages,
+            });
             setState({
               kind: "ready",
               url: asset.url,
@@ -121,6 +137,9 @@ function TypstPreviewView({ body, format }: { body: string; format: RenderFormat
               cached: asset.cached,
               transport: "asset",
               bytes: asset.bytes,
+              widthPt: asset.width_pt,
+              heightPt: asset.height_pt,
+              pages: asset.pages,
             });
           }
           return;
@@ -138,6 +157,8 @@ function TypstPreviewView({ body, format }: { body: string; format: RenderFormat
               cached: output.cached,
               transport: "ipc",
               bytes: output.svg.length,
+              widthPt: output.width_pt,
+              heightPt: output.height_pt,
             });
           }
         } catch (error) {
@@ -161,12 +182,12 @@ function TypstPreviewView({ body, format }: { body: string; format: RenderFormat
           <span>{state.cached ? "cache hit" : `${state.elapsedMs}ms`}</span>
         </div>
         {state.url ? (
-          <object
-            aria-label="Typst preview"
-            className="typst-preview-asset"
-            data={state.url}
-            onError={() => setState({ kind: "fallback", message: "Preview asset expired" })}
-            type="image/svg+xml"
+          <PreviewAsset
+            heightPt={state.heightPt}
+            onExpired={() => setState({ kind: "fallback", message: "Preview asset expired" })}
+            pages={state.pages}
+            url={state.url}
+            widthPt={state.widthPt}
           />
         ) : (
           <div dangerouslySetInnerHTML={{ __html: state.svg ?? "" }} />
@@ -183,6 +204,37 @@ function TypstPreviewView({ body, format }: { body: string; format: RenderFormat
         <MarkdownView>{body}</MarkdownView>
       </Suspense>
     </>
+  );
+}
+
+function PreviewAsset({
+  heightPt,
+  onExpired,
+  pages,
+  url,
+  widthPt,
+}: {
+  heightPt?: number;
+  onExpired: () => void;
+  pages?: RenderPageAssetOutput[];
+  url: string;
+  widthPt?: number;
+}) {
+  const visiblePages = pages?.length ? pages : [{ index: 0, url, width_pt: widthPt ?? 480, height_pt: heightPt ?? 640, bytes: 0 }];
+  return (
+    <div className="typst-preview-pages">
+      {visiblePages.map((page) => (
+        <object
+          key={`${page.index}:${page.url}`}
+          aria-label={`Typst preview page ${page.index + 1}`}
+          className="typst-preview-asset"
+          data={page.url}
+          onError={onExpired}
+          style={{ aspectRatio: `${Math.max(page.width_pt, 1)} / ${Math.max(page.height_pt, 1)}` }}
+          type="image/svg+xml"
+        />
+      ))}
+    </div>
   );
 }
 
