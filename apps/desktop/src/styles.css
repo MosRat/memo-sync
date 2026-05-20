@@ -1,7 +1,23 @@
+@font-face {
+  font-family: "Memo Inter";
+  src: url("/fonts/InterVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Memo JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-VF.woff2") format("woff2");
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
-  --font-ui: Inter, "SF Pro Text", "Segoe UI", "Noto Sans SC", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  --font-ui: "Memo Inter", Inter, "SF Pro Text", "Segoe UI", "Noto Sans SC", "Microsoft YaHei UI", "PingFang SC", sans-serif;
   --font-serif: "Iowan Old Style", "Georgia", "Songti SC", "Noto Serif SC", "SimSun", serif;
-  --font-mono: "Cascadia Code", "JetBrains Mono", "SFMono-Regular", "Noto Sans Mono CJK SC", Consolas, monospace;
+  --font-mono: "Memo JetBrains Mono", "Cascadia Code", "JetBrains Mono", "SFMono-Regular", "Noto Sans Mono CJK SC", Consolas, monospace;
   --ink: #25231f;
   --ink-soft: #5d574f;
   --muted: #887d70;
