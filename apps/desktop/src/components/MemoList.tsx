@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Memo } from "../types";
 
-const rowHeight = 124;
+const rowHeight = 128;
 const overscan = 4;
 
 function MemoListView({
