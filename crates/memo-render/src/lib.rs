@@ -3,12 +3,29 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, VecDeque},
+    sync::LazyLock,
     time::Instant,
 };
+use typst::foundations::{Dict, IntoValue};
 use typst::layout::{Abs, PagedDocument};
-use typst_as_lib::TypstEngine;
+use typst_as_lib::{typst_kit_options::TypstKitFontOptions, TypstEngine, TypstTemplateMainFile};
 
-const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v2";
+const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v3";
+const RENDER_MAIN_TEMPLATE: &str = r#"#import sys: inputs
+#eval(inputs.source, mode: "markup")
+"#;
+
+static RENDER_ENGINE: LazyLock<TypstEngine<TypstTemplateMainFile>> = LazyLock::new(|| {
+    TypstEngine::builder()
+        .search_fonts_with(
+            TypstKitFontOptions::default()
+                .include_system_fonts(true)
+                .include_embedded_fonts(true),
+        )
+        .main_file(RENDER_MAIN_TEMPLATE)
+        .with_package_file_resolver()
+        .build()
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -82,6 +99,7 @@ pub struct RenderPageMetadata {
 pub fn render_memo(input: RenderMemoInput) -> anyhow::Result<RenderMemoOutput> {
     let cache_key = render_cache_key(&input);
     let started = Instant::now();
+    let expects_text = input.format == RenderFormat::Markdown && markdown_expects_text(&input.body);
     let (source, diagnostics) = match input.format {
         RenderFormat::Markdown => {
             let (typst_body, diagnostics) = markdown_to_typst(&input.body);
@@ -89,11 +107,10 @@ pub fn render_memo(input: RenderMemoInput) -> anyhow::Result<RenderMemoOutput> {
         }
         RenderFormat::Typst => (typst_source(&input.body, input.template), Vec::new()),
     };
-    let builder =
-        TypstEngine::builder().with_static_source_file_resolver([("main.typ", source.as_str())]);
-    let engine = builder.with_package_file_resolver().build();
-    let document: PagedDocument = engine
-        .compile("main.typ")
+    let mut inputs = Dict::new();
+    inputs.insert("source".into(), source.into_value());
+    let document: PagedDocument = RENDER_ENGINE
+        .compile_with_input(inputs)
         .output
         .map_err(|error| anyhow!("Typst compile failed: {error:?}"))?;
     let pages = document
@@ -116,6 +133,11 @@ pub fn render_memo(input: RenderMemoInput) -> anyhow::Result<RenderMemoOutput> {
     } else {
         typst_svg::svg_merged(&document, Abs::pt(0.0))
     };
+    if expects_text && !svg_has_text_geometry(&svg) {
+        return Err(anyhow!(
+            "Typst generated no visible text glyphs; check preview font availability"
+        ));
+    }
     let width_pt = pages.iter().map(|page| page.width_pt).fold(0.0, f64::max);
     let height_pt = pages.iter().map(|page| page.height_pt).sum();
     Ok(RenderMemoOutput {
@@ -448,6 +470,14 @@ fn escape_typst_string(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+fn markdown_expects_text(markdown: &str) -> bool {
+    markdown.chars().any(char::is_alphanumeric)
+}
+
+fn svg_has_text_geometry(svg: &str) -> bool {
+    svg.contains("class=\"typst-text\"")
+}
+
 fn cache_key(body: &str, format: RenderFormat, template: RenderTemplate) -> String {
     let mut hasher = Sha256::new();
     hasher.update(RENDER_TEMPLATE_VERSION);
@@ -489,6 +519,7 @@ mod tests {
         })
         .unwrap();
         assert!(output.svg.contains("<svg"));
+        assert!(svg_has_text_geometry(&output.svg));
     }
 
     #[test]
@@ -577,6 +608,11 @@ mod tests {
             "expected heading and code layout, got {}pt",
             output.height_pt
         );
+        assert!(svg_has_text_geometry(&output.svg));
+        assert!(
+            output.svg.matches("<use").count() > 20,
+            "expected Typst to emit real glyph references"
+        );
         assert!(!output.diagnostics.is_empty());
     }
 
@@ -589,5 +625,6 @@ mod tests {
         })
         .unwrap();
         assert!(output.svg.contains("<svg"));
+        assert!(svg_has_text_geometry(&output.svg));
     }
 }

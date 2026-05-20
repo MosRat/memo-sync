@@ -5,6 +5,7 @@ import type { PreviewRenderPath, RenderFormat, RenderPageAssetOutput, RenderTemp
 const MarkdownView = lazy(() => import("../MarkdownView"));
 const PREVIEW_CACHE_MAX_ENTRIES = 18;
 const PREVIEW_CACHE_MAX_BYTES = 12 * 1024 * 1024;
+const PREVIEW_CACHE_VERSION = "typst-fonts-v3";
 
 type RenderState =
   | { kind: "idle" | "loading" | "markdown" }
@@ -111,7 +112,7 @@ function TypstPreviewView({
       setState({ kind: "markdown" });
       return;
     }
-    const key = `${effectivePath}\0${template}\0${previewCacheKey(body, format)}`;
+    const key = `${PREVIEW_CACHE_VERSION}\0${effectivePath}\0${template}\0${previewCacheKey(body, format)}`;
     const cachedPreview = getCachedPreview(key);
     if (effectivePath === "typst-asset" && cachedPreview) {
       setState({
