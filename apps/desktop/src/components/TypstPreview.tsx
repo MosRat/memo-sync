@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useEffect, useState } from "react";
+import { lazy, memo, Suspense, useEffect, useRef, useState } from "react";
 import { isDesktopApp, renderMemoPreview } from "../tauri";
 import type { RenderFormat } from "../types";
 
@@ -6,13 +6,16 @@ const MarkdownView = lazy(() => import("../MarkdownView"));
 
 type RenderState =
   | { kind: "idle" | "loading" }
-  | { kind: "ready"; svg: string; elapsedMs: number }
+  | { kind: "ready"; svg: string; elapsedMs: number; cached: boolean }
   | { kind: "fallback"; message: string };
 
 function TypstPreviewView({ body, format }: { body: string; format: RenderFormat }) {
   const [state, setState] = useState<RenderState>({ kind: "idle" });
+  const requestIdRef = useRef(0);
 
   useEffect(() => {
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
     if (!isDesktopApp) {
       setState({ kind: "fallback", message: "Web preview uses React Markdown" });
       return;
@@ -22,10 +25,14 @@ function TypstPreviewView({ body, format }: { body: string; format: RenderFormat
       setState((current) => (current.kind === "ready" ? current : { kind: "loading" }));
       renderMemoPreview(body, format)
         .then((output) => {
-          if (!cancelled) setState({ kind: "ready", svg: output.svg, elapsedMs: output.elapsed_ms });
+          if (!cancelled && requestIdRef.current === requestId) {
+            setState({ kind: "ready", svg: output.svg, elapsedMs: output.elapsed_ms, cached: output.cached });
+          }
         })
         .catch((error) => {
-          if (!cancelled) setState({ kind: "fallback", message: error instanceof Error ? error.message : String(error) });
+          if (!cancelled && requestIdRef.current === requestId) {
+            setState({ kind: "fallback", message: error instanceof Error ? error.message : String(error) });
+          }
         });
     }, 180);
     return () => {
@@ -37,7 +44,10 @@ function TypstPreviewView({ body, format }: { body: string; format: RenderFormat
   if (state.kind === "ready") {
     return (
       <div className="typst-preview">
-        <div className="render-badge">Typst SVG · {state.elapsedMs}ms</div>
+        <div className="render-status">
+          <span>Typst SVG</span>
+          <span>{state.cached ? "cache hit" : `${state.elapsedMs}ms`}</span>
+        </div>
         <div dangerouslySetInnerHTML={{ __html: state.svg }} />
       </div>
     );

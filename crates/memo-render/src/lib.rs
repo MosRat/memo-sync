@@ -1,7 +1,10 @@
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::time::Instant;
+use std::{
+    collections::{HashMap, VecDeque},
+    time::Instant,
+};
 use typst::layout::Abs;
 use typst_as_lib::TypstEngine;
 
@@ -24,9 +27,11 @@ pub struct RenderMemoOutput {
     pub diagnostics: Vec<String>,
     pub elapsed_ms: u128,
     pub cache_key: String,
+    pub cached: bool,
 }
 
 pub fn render_memo(input: RenderMemoInput) -> anyhow::Result<RenderMemoOutput> {
+    let cache_key = render_cache_key(&input);
     let started = Instant::now();
     let source = match input.format {
         RenderFormat::Markdown => markdown_source().to_string(),
@@ -48,8 +53,75 @@ pub fn render_memo(input: RenderMemoInput) -> anyhow::Result<RenderMemoOutput> {
         svg,
         diagnostics: Vec::new(),
         elapsed_ms: started.elapsed().as_millis(),
-        cache_key: cache_key(&input.body, input.format),
+        cache_key,
+        cached: false,
     })
+}
+
+#[derive(Debug)]
+pub struct RenderCache {
+    entries: HashMap<String, RenderMemoOutput>,
+    order: VecDeque<String>,
+    max_entries: usize,
+    max_bytes: usize,
+    current_bytes: usize,
+}
+
+impl RenderCache {
+    pub fn new(max_entries: usize, max_bytes: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+            max_entries: max_entries.max(1),
+            max_bytes: max_bytes.max(1024),
+            current_bytes: 0,
+        }
+    }
+
+    pub fn get(&mut self, key: &str) -> Option<RenderMemoOutput> {
+        let cached = self.entries.get(key)?;
+        move_to_back(&mut self.order, key);
+        let mut output = cached.clone();
+        output.cached = true;
+        output.elapsed_ms = 0;
+        Some(output)
+    }
+
+    pub fn insert(&mut self, output: RenderMemoOutput) {
+        let key = output.cache_key.clone();
+        let size = output.svg.len();
+        if size > self.max_bytes {
+            return;
+        }
+        if let Some(existing) = self.entries.remove(&key) {
+            self.current_bytes = self.current_bytes.saturating_sub(existing.svg.len());
+            self.order.retain(|item| item != &key);
+        }
+        self.current_bytes += size;
+        self.order.push_back(key.clone());
+        self.entries.insert(key, output);
+        while self.entries.len() > self.max_entries || self.current_bytes > self.max_bytes {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(removed) = self.entries.remove(&oldest) {
+                self.current_bytes = self.current_bytes.saturating_sub(removed.svg.len());
+            }
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+pub fn render_cache_key(input: &RenderMemoInput) -> String {
+    cache_key(&input.body, input.format)
+}
+
+fn move_to_back(order: &mut VecDeque<String>, key: &str) {
+    order.retain(|item| item != key);
+    order.push_back(key.to_string());
 }
 
 fn markdown_source() -> &'static str {
@@ -111,6 +183,31 @@ mod tests {
         })
         .unwrap();
         assert!(output.svg.contains("<svg"));
+    }
+
+    #[test]
+    fn render_cache_marks_hits_and_evicts() {
+        let mut cache = RenderCache::new(1, 1024 * 1024);
+        let first = RenderMemoOutput {
+            svg: "<svg>one</svg>".to_string(),
+            diagnostics: Vec::new(),
+            elapsed_ms: 12,
+            cache_key: "one".to_string(),
+            cached: false,
+        };
+        let second = RenderMemoOutput {
+            svg: "<svg>two</svg>".to_string(),
+            diagnostics: Vec::new(),
+            elapsed_ms: 10,
+            cache_key: "two".to_string(),
+            cached: false,
+        };
+        cache.insert(first);
+        assert!(cache.get("one").unwrap().cached);
+        cache.insert(second);
+        assert_eq!(cache.len(), 1);
+        assert!(cache.get("one").is_none());
+        assert!(cache.get("two").is_some());
     }
 
     #[test]

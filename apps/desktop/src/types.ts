@@ -91,4 +91,5 @@ export interface RenderMemoOutput {
   diagnostics: string[];
   elapsed_ms: number;
   cache_key: string;
+  cached: boolean;
 }

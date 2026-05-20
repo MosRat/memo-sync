@@ -1,7 +1,7 @@
 mod store;
 
 use memo_core::{Memo, MemoFilter, MemoSource, Repository};
-use memo_render::{RenderMemoInput, RenderMemoOutput};
+use memo_render::{RenderCache, RenderMemoInput, RenderMemoOutput};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -32,6 +32,7 @@ struct AppState {
     settings_path: PathBuf,
     settings: Arc<Mutex<AppSettings>>,
     sync_lock: Arc<AsyncMutex<()>>,
+    render_cache: Arc<Mutex<RenderCache>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -163,12 +164,14 @@ pub fn run() {
             let settings = load_settings(&settings_path)?;
             let settings = Arc::new(Mutex::new(settings));
             let sync_lock = Arc::new(AsyncMutex::new(()));
+            let render_cache = Arc::new(Mutex::new(RenderCache::new(96, 24 * 1024 * 1024)));
             app.manage(AppState {
                 store: store.clone(),
                 device_id: device_id.clone(),
                 settings_path,
                 settings: settings.clone(),
                 sync_lock: sync_lock.clone(),
+                render_cache,
             });
             spawn_background_sync(
                 app.handle().clone(),
@@ -295,11 +298,24 @@ async fn update_repository(
 }
 
 #[tauri::command]
-async fn render_memo_preview(input: RenderMemoInput) -> Result<RenderMemoOutput, String> {
-    tauri::async_runtime::spawn_blocking(move || memo_render::render_memo(input))
+async fn render_memo_preview(
+    state: State<'_, AppState>,
+    input: RenderMemoInput,
+) -> Result<RenderMemoOutput, String> {
+    let cache_key = memo_render::render_cache_key(&input);
+    if let Some(output) = state.render_cache.lock().map_err(to_string)?.get(&cache_key) {
+        return Ok(output);
+    }
+    let output = tauri::async_runtime::spawn_blocking(move || memo_render::render_memo(input))
         .await
         .map_err(to_string)?
-        .map_err(to_string)
+        .map_err(to_string)?;
+    state
+        .render_cache
+        .lock()
+        .map_err(to_string)?
+        .insert(output.clone());
+    Ok(output)
 }
 
 #[tauri::command]
