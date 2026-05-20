@@ -13,28 +13,30 @@ Tauri's communication model matters because rendered SVG can become large. `invo
 ```text
 React editor
   -> debounced render request
-  -> Tauri invoke(render_memo_preview)
+  -> Tauri invoke(render_memo_preview_asset)
   -> Rust render cache lookup
   -> spawn_blocking Typst compile on miss
-  -> Typst/cmarker -> merged SVG
-  -> React injects SVG
+  -> Typst/cmarker -> merged SVG in Rust cache
+  -> React loads memo-preview://localhost/svg/<cacheKey>.svg
 ```
 
 Implemented safeguards:
 
 - frontend request id: stale Typst results are ignored
 - frontend debounce: avoids compiling on every keystroke, with larger delays for larger documents
-- frontend LRU cache: repeated previews in the same app session skip IPC and Rust rendering
+- frontend LRU cache: repeated previews in the same app session reuse the preview asset URL
 - Rust `spawn_blocking`: Typst compilation does not block the async runtime
 - Rust LRU cache: 96 entries, 24 MiB max SVG bytes
 - cache key: `format + body`
+- custom `memo-preview://` protocol: SVG is loaded as a WebView resource instead of being serialized through JSON IPC
+- legacy SVG IPC fallback: keeps preview available if a platform rejects the asset path
 - cmarker test: ignored by default but manually runnable because package fetch may use network
 
 ## Next Architecture
 
 ### Stage 1: Current App Path
 
-Keep `invoke` for complete SVG results while memos are small and medium sized.
+Keep `invoke` for render metadata while memos are small and medium sized. Complete SVG strings remain as a fallback only.
 
 Add:
 
@@ -45,21 +47,28 @@ Implemented now:
 
 - frontend LRU cache, so toggling edit/preview avoids IPC entirely
 - adaptive debounce by document size
+- asset-backed preview URL, so the hot path avoids large JSON IPC payloads
 
 ### Stage 2: Asset-backed Preview
 
-For larger SVGs, change `render_memo_preview` to return metadata:
+Implemented baseline:
 
 ```json
 {
   "cacheKey": "...",
-  "url": "memo-preview://svg/<cacheKey>",
+  "url": "memo-preview://localhost/svg/<cacheKey>.svg",
   "elapsedMs": 42,
   "cached": false
 }
 ```
 
-Then the WebView fetches SVG through a custom protocol. This avoids repeatedly serializing huge SVG strings through JSON IPC and lets the WebView cache/fetch like a normal resource.
+The WebView fetches SVG through a custom protocol. This avoids repeatedly serializing huge SVG strings through JSON IPC and lets the WebView cache/fetch like a normal resource.
+
+Next refinement:
+
+- return page dimensions with the metadata, so the `<object>` can reserve an exact height before the SVG loads
+- split long documents into page assets: `memo-preview://localhost/page/<cacheKey>/<page>.svg`
+- keep visible pages mounted and refresh only changed page URLs
 
 ### Stage 3: Streaming / Partial Rendering
 

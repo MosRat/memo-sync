@@ -24,6 +24,7 @@ const EVENT_OPEN_QUICK_CAPTURE: &str = "open-quick-capture";
 const EVENT_CLIPBOARD_CAPTURE_REQUESTED: &str = "clipboard-capture-requested";
 const EVENT_MEMOS_CHANGED: &str = "memos-changed";
 const EVENT_SYNC_COMPLETED: &str = "sync-completed";
+const PREVIEW_PROTOCOL: &str = "memo-preview";
 
 #[derive(Clone)]
 struct AppState {
@@ -58,6 +59,16 @@ struct ShortcutCheckResult {
     clipboard_available: bool,
     settings_available: bool,
     message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RenderMemoAssetOutput {
+    url: String,
+    diagnostics: Vec<String>,
+    elapsed_ms: u128,
+    cache_key: String,
+    cached: bool,
+    bytes: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,6 +146,9 @@ enum SecondInstanceIntent {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .register_uri_scheme_protocol(PREVIEW_PROTOCOL, |ctx, request| {
+            preview_protocol_response(ctx.app_handle(), request.uri().path())
+        })
         .plugin(tauri_plugin_single_instance::init(
             |app, argv, _working_directory| match second_instance_intent(&argv) {
                 SecondInstanceIntent::ShowMain => {
@@ -199,6 +213,7 @@ pub fn run() {
             create_repository,
             update_repository,
             render_memo_preview,
+            render_memo_preview_asset,
             save_memo,
             save_quick_memo,
             delete_memo,
@@ -302,6 +317,29 @@ async fn render_memo_preview(
     state: State<'_, AppState>,
     input: RenderMemoInput,
 ) -> Result<RenderMemoOutput, String> {
+    render_memo_output(&state, input).await
+}
+
+#[tauri::command]
+async fn render_memo_preview_asset(
+    state: State<'_, AppState>,
+    input: RenderMemoInput,
+) -> Result<RenderMemoAssetOutput, String> {
+    let output = render_memo_output(&state, input).await?;
+    Ok(RenderMemoAssetOutput {
+        url: preview_asset_url(&output.cache_key),
+        diagnostics: output.diagnostics,
+        elapsed_ms: output.elapsed_ms,
+        cache_key: output.cache_key,
+        cached: output.cached,
+        bytes: output.svg.len(),
+    })
+}
+
+async fn render_memo_output(
+    state: &AppState,
+    input: RenderMemoInput,
+) -> Result<RenderMemoOutput, String> {
     let cache_key = memo_render::render_cache_key(&input);
     if let Some(output) = state.render_cache.lock().map_err(to_string)?.get(&cache_key) {
         return Ok(output);
@@ -316,6 +354,68 @@ async fn render_memo_preview(
         .map_err(to_string)?
         .insert(output.clone());
     Ok(output)
+}
+
+fn preview_asset_url(cache_key: &str) -> String {
+    format!("{PREVIEW_PROTOCOL}://localhost/svg/{cache_key}.svg")
+}
+
+fn preview_key_from_path(path: &str) -> Option<&str> {
+    let key = path.strip_prefix("/svg/")?.strip_suffix(".svg")?;
+    if key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Some(key)
+    } else {
+        None
+    }
+}
+
+fn preview_protocol_response(
+    app: &tauri::AppHandle,
+    path: &str,
+) -> tauri::http::Response<Vec<u8>> {
+    let Some(cache_key) = preview_key_from_path(path) else {
+        return preview_protocol_error(tauri::http::StatusCode::BAD_REQUEST, "bad preview path");
+    };
+    let Some(state) = app.try_state::<AppState>() else {
+        return preview_protocol_error(
+            tauri::http::StatusCode::SERVICE_UNAVAILABLE,
+            "preview cache is not ready",
+        );
+    };
+    let output = match state.render_cache.lock() {
+        Ok(mut cache) => cache.get(cache_key),
+        Err(error) => {
+            return preview_protocol_error(
+                tauri::http::StatusCode::INTERNAL_SERVER_ERROR,
+                &error.to_string(),
+            )
+        }
+    };
+    let Some(output) = output else {
+        return preview_protocol_error(tauri::http::StatusCode::NOT_FOUND, "preview expired");
+    };
+    tauri::http::Response::builder()
+        .status(tauri::http::StatusCode::OK)
+        .header(
+            tauri::http::header::CONTENT_TYPE,
+            "image/svg+xml; charset=utf-8",
+        )
+        .header(
+            tauri::http::header::CACHE_CONTROL,
+            "private, max-age=300, stale-while-revalidate=30",
+        )
+        .body(output.svg.into_bytes())
+        .unwrap_or_else(|error| {
+            preview_protocol_error(tauri::http::StatusCode::INTERNAL_SERVER_ERROR, &error.to_string())
+        })
+}
+
+fn preview_protocol_error(status: tauri::http::StatusCode, message: &str) -> tauri::http::Response<Vec<u8>> {
+    tauri::http::Response::builder()
+        .status(status)
+        .header(tauri::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+        .body(message.as_bytes().to_vec())
+        .expect("preview protocol error response")
 }
 
 #[tauri::command]
@@ -986,5 +1086,16 @@ mod tests {
             second_instance_intent(&["memo-desktop".to_string(), "--settings".to_string()]),
             SecondInstanceIntent::Settings
         );
+    }
+
+    #[test]
+    fn preview_protocol_accepts_only_svg_cache_keys() {
+        let key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            preview_key_from_path(&format!("/svg/{key}.svg")),
+            Some(key)
+        );
+        assert!(preview_key_from_path("/svg/not-a-key.svg").is_none());
+        assert!(preview_key_from_path("/other/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.svg").is_none());
     }
 }

@@ -1031,6 +1031,16 @@ textarea:focus {
   box-shadow: 0 16px 38px rgba(44, 37, 30, 0.08);
 }
 
+.typst-preview-asset {
+  display: block;
+  width: 100%;
+  min-height: min(72vh, 860px);
+  border: 0;
+  border-radius: 8px;
+  background: #fffdf8;
+  box-shadow: 0 16px 38px rgba(44, 37, 30, 0.08);
+}
+
 .markdown h1,
 .markdown h2,
 .markdown h3 {

@@ -93,3 +93,12 @@ export interface RenderMemoOutput {
   cache_key: string;
   cached: boolean;
 }
+
+export interface RenderMemoAssetOutput {
+  url: string;
+  diagnostics: string[];
+  elapsed_ms: number;
+  cache_key: string;
+  cached: boolean;
+  bytes: number;
+}

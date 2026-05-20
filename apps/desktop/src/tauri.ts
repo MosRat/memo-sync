@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { AppSettings, Bootstrap, LocalStats, Memo, MemoFilter, RenderFormat, RenderMemoOutput, Repository, SaveMemoInput, ShortcutCheckResult } from "./types";
+import type { AppSettings, Bootstrap, LocalStats, Memo, MemoFilter, RenderFormat, RenderMemoAssetOutput, RenderMemoOutput, Repository, SaveMemoInput, ShortcutCheckResult } from "./types";
 
 const isTauri = "__TAURI_INTERNALS__" in window;
 export const isDesktopApp = isTauri;
@@ -245,6 +245,11 @@ export async function syncNow(serverUrl: string): Promise<{ pushed: number; pull
 
 export async function renderMemoPreview(body: string, format: RenderFormat): Promise<RenderMemoOutput> {
   if (isTauri) return invoke("render_memo_preview", { input: { body, format } });
+  throw new Error("Typst renderer is available in the desktop app");
+}
+
+export async function renderMemoPreviewAsset(body: string, format: RenderFormat): Promise<RenderMemoAssetOutput> {
+  if (isTauri) return invoke("render_memo_preview_asset", { input: { body, format } });
   throw new Error("Typst renderer is available in the desktop app");
 }
 
