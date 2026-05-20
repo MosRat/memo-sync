@@ -56,7 +56,9 @@ import {
   windowAction,
 } from "./tauri";
 import { memoSearchText, tokenizeTags } from "./search";
+import { CommandPalette, type CommandItem } from "./components/CommandPalette";
 import { MemoList } from "./components/MemoList";
+import { ToastStack, type ToastKind, type ToastMessage } from "./components/ToastStack";
 
 const colors = ["#c86f52", "#6f8f83", "#5f7597", "#9a7a42", "#8a6fa8"];
 const MarkdownView = lazy(() => import("./MarkdownView"));
@@ -115,12 +117,15 @@ function WorkbenchApp() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [saveText, setSaveText] = useState("Saved");
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const quickRepoRef = useRef("");
   const repositoriesRef = useRef<Repository[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchRequestRef = useRef(0);
   const saveTimerRef = useRef<number | null>(null);
   const pendingSaveRef = useRef<SaveMemoInput | null>(null);
+  const toastIdRef = useRef(0);
 
   useEffect(() => {
     quickRepoRef.current = quickRepo;
@@ -154,6 +159,7 @@ function WorkbenchApp() {
             ? `Auto: pushed ${payload.pushed}, pulled ${payload.pulled}`
             : `Pushed ${payload.pushed}, pulled ${payload.pulled}`,
         );
+        if (!payload.background) notify("success", "Sync completed", `Pushed ${payload.pushed}, pulled ${payload.pulled}`);
         void bootstrap().then((data) => setLocalStats(data.local_stats));
       } else if (payload.background) {
         setSyncText(`Auto sync: ${payload.message}`);
@@ -226,6 +232,15 @@ function WorkbenchApp() {
   const activeRepository = repositories.find((repo) => repo.id === activeMemo?.repository_id);
   const captureRepoId = activeRepo !== "all" ? activeRepo : quickRepo || repositories[0]?.id || "";
 
+  const notify = useCallback((kind: ToastKind, title: string, detail?: string) => {
+    const id = toastIdRef.current + 1;
+    toastIdRef.current = id;
+    setToasts((items) => [...items.slice(-3), { id, kind, title, detail }]);
+    window.setTimeout(() => {
+      setToasts((items) => items.filter((item) => item.id !== id));
+    }, kind === "error" ? 5200 : 3200);
+  }, []);
+
   const selectMemoByOffset = useCallback(
     (offset: number) => {
       if (!visibleMemos.length) return;
@@ -248,6 +263,11 @@ function WorkbenchApp() {
         event.preventDefault();
         searchInputRef.current?.focus();
         searchInputRef.current?.select();
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        setCommandOpen(true);
         return;
       }
       if (event.key === "Escape" && document.activeElement === searchInputRef.current) {
@@ -278,6 +298,87 @@ function WorkbenchApp() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [selectMemoByOffset]);
+
+  const commands: CommandItem[] = [
+    {
+      id: "new-memo",
+      title: "New memo",
+      detail: activeRepo === "all" ? "Create in the first repository" : "Create in current repository",
+      shortcut: "Ctrl N",
+      run: () => handleNewMemo(),
+    },
+    {
+      id: "quick-capture",
+      title: "Quick capture",
+      detail: "Open the floating capture window",
+      shortcut: "Ctrl J",
+      run: () => showQuickCaptureWindow(),
+    },
+    {
+      id: "clipboard",
+      title: "Capture clipboard",
+      detail: "Save clipboard text into the selected repository",
+      run: () => {
+        if (captureRepoId) return handleClipboardCapture(captureRepoId);
+      },
+    },
+    {
+      id: "sync",
+      title: "Sync now",
+      detail: syncText,
+      run: () => handleSync(),
+    },
+    {
+      id: "search",
+      title: "Focus search",
+      detail: "Search text, tags, and metadata",
+      shortcut: "Ctrl K",
+      run: () => {
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      },
+    },
+    {
+      id: "clear-filters",
+      title: "Clear filters",
+      detail: "Show all notes again",
+      run: () => {
+        setActiveRepo("all");
+        setTagFilter(null);
+        setQuery("");
+      },
+    },
+    {
+      id: "mode-split",
+      title: "Editor and preview",
+      detail: "Use split writing mode",
+      run: () => setMode("split"),
+    },
+    {
+      id: "mode-edit",
+      title: "Editor only",
+      detail: "Focus on Markdown input",
+      run: () => setMode("edit"),
+    },
+    {
+      id: "mode-preview",
+      title: "Preview only",
+      detail: "Read the rendered memo",
+      run: () => setMode("preview"),
+    },
+    {
+      id: "toggle-sidebar",
+      title: sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar",
+      detail: "Change navigation density",
+      run: () => setSidebarCollapsed((value) => !value),
+    },
+    {
+      id: "settings",
+      title: "Settings",
+      detail: "Sync endpoint, shortcuts, and about",
+      run: () => (isDesktopApp ? showSettingsWindow() : setDialog("settings")),
+    },
+  ];
 
   function memoInputFrom(memo: Memo, patch: Partial<SaveMemoInput> = {}): SaveMemoInput {
     return {
@@ -328,6 +429,7 @@ function WorkbenchApp() {
     } catch (error) {
       pendingSaveRef.current = pending;
       setSaveText(error instanceof Error ? "Save failed" : "Save failed");
+      notify("error", "Save failed", error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -384,6 +486,7 @@ function WorkbenchApp() {
     setAllTags((items) => [...new Set([...items, ...saved.tags])].sort());
     setActiveMemoId(saved.id);
     setMode("edit");
+    notify("success", "Memo created", activeRepo === "all" ? undefined : activeRepository?.name);
   }
 
   async function handleDelete(id: string) {
@@ -391,6 +494,7 @@ function WorkbenchApp() {
     await deleteMemo(id);
     setMemos((items) => items.filter((item) => item.id !== id));
     setActiveMemoId(null);
+    notify("warning", "Memo deleted");
   }
 
   async function handleClipboardCapture(repositoryId: string) {
@@ -398,6 +502,7 @@ function WorkbenchApp() {
     setMemos((items) => [saved, ...items.filter((item) => item.id !== saved.id)]);
     setAllTags((items) => [...new Set([...items, ...saved.tags])].sort());
     setActiveMemoId(saved.id);
+    notify("success", "Clipboard captured", saved.title);
   }
 
   async function handleQuickSave() {
@@ -416,6 +521,7 @@ function WorkbenchApp() {
     setActiveMemoId(saved.id);
     setQuickText("");
     setQuickOpen(false);
+    notify("success", "Quick memo saved", saved.title);
   }
 
   async function fillQuickFromClipboard() {
@@ -427,6 +533,7 @@ function WorkbenchApp() {
     setRepositories((items) => [...items, repo]);
     setQuickRepo(repo.id);
     setNewRepoOpen(false);
+    notify("success", "Repository created", repo.name);
   }
 
   async function handleSync() {
@@ -439,6 +546,7 @@ function WorkbenchApp() {
       applyBootstrap(refreshed, activeMemoId);
     } catch (error) {
       setSyncText(error instanceof Error ? error.message : String(error));
+      notify("error", "Sync failed", error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -449,6 +557,7 @@ function WorkbenchApp() {
     setMode(saved.writing_mode);
     setSidebarCollapsed(saved.compact_sidebar_on_start);
     setSyncText("Settings saved");
+    notify("success", "Settings saved");
   }
 
   return (
@@ -697,6 +806,8 @@ function WorkbenchApp() {
           isDesktop={isDesktopApp}
         />
       )}
+      <CommandPalette open={commandOpen} commands={commands} onClose={() => setCommandOpen(false)} />
+      <ToastStack toasts={toasts} onDismiss={(id) => setToasts((items) => items.filter((item) => item.id !== id))} />
     </main>
   );
 }
