@@ -64,6 +64,7 @@ import { memoSearchText, textStatsLabel, tokenizeTags } from "./search";
 import { CommandPalette, type CommandItem } from "./components/CommandPalette";
 import { MemoList } from "./components/MemoList";
 import { ToastStack, type ToastKind, type ToastMessage } from "./components/ToastStack";
+import { TypstPreview } from "./components/TypstPreview";
 
 const colors = ["#c86f52", "#6f8f83", "#5f7597", "#9a7a42", "#8a6fa8"];
 const MarkdownView = lazy(() => import("./MarkdownView"));
@@ -1274,9 +1275,7 @@ function WorkbenchApp() {
                 )}
                 {mode !== "edit" && (
                   <article className="markdown">
-                    <Suspense fallback={<p className="markdown-loading">Rendering preview...</p>}>
-                      <MarkdownView>{activeMemo.body_md}</MarkdownView>
-                    </Suspense>
+                    <TypstPreview body={activeMemo.body_md} format={activeMemo.tags.includes("typst") ? "typst" : "markdown"} />
                   </article>
                 )}
               </div>

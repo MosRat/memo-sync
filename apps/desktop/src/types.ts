@@ -83,3 +83,12 @@ export interface ShortcutCheckResult {
   settings_available: boolean;
   message: string;
 }
+
+export type RenderFormat = "markdown" | "typst";
+
+export interface RenderMemoOutput {
+  svg: string;
+  diagnostics: string[];
+  elapsed_ms: number;
+  cache_key: string;
+}

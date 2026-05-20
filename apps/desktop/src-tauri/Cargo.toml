@@ -21,6 +21,7 @@ tauri-build = { version = "2.4", features = [] }
 anyhow.workspace = true
 chrono.workspace = true
 memo-core = { path = "../../../crates/memo-core" }
+memo-render = { path = "../../../crates/memo-render" }
 reqwest = { version = "0.12", default-features = false, features = ["gzip", "json", "rustls-tls"] }
 serde.workspace = true
 serde_json.workspace = true

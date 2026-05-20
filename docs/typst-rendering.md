@@ -59,7 +59,7 @@ Then provide `memo.md` from an in-memory virtual file through `World::source`/`W
 
 ## Proposed App Architecture
 
-Add a new crate:
+Added a new crate:
 
 ```text
 crates/memo-render/
@@ -73,6 +73,15 @@ Responsibilities:
 - markdown wrapper generation
 - typst direct compilation
 - SVG export
+
+First implementation status:
+
+- `memo-render` exists and can compile direct Typst input to merged SVG.
+- Tauri exposes `render_memo_preview`.
+- Desktop preview calls the Rust renderer first and falls back to React Markdown when Typst/cmarker fails.
+- Markdown rendering is wired through the cmarker Typst package path, so the first successful render may need package download/cache access.
+- `memo.md` is provided through Typst's binary file resolver because cmarker uses `read(...)`, not an import/source load.
+- A direct Typst smoke test runs in the normal Rust suite. A cmarker Markdown smoke test is present but ignored by default because it may download the package on first use.
 
 Tauri commands:
 

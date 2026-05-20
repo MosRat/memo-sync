@@ -1,6 +1,7 @@
 mod store;
 
 use memo_core::{Memo, MemoFilter, MemoSource, Repository};
+use memo_render::{RenderMemoInput, RenderMemoOutput};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -194,6 +195,7 @@ pub fn run() {
             check_shortcuts,
             create_repository,
             update_repository,
+            render_memo_preview,
             save_memo,
             save_quick_memo,
             delete_memo,
@@ -289,6 +291,14 @@ async fn update_repository(
         .store
         .update_repository(id, name, color, sync_enabled, &state.device_id)
         .await
+        .map_err(to_string)
+}
+
+#[tauri::command]
+async fn render_memo_preview(input: RenderMemoInput) -> Result<RenderMemoOutput, String> {
+    tauri::async_runtime::spawn_blocking(move || memo_render::render_memo(input))
+        .await
+        .map_err(to_string)?
         .map_err(to_string)
 }
 

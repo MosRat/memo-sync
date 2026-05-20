@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/memo-core",
+  "crates/memo-render",
   "crates/memo-server",
   "apps/desktop/src-tauri",
 ]
