@@ -56,6 +56,7 @@ import {
   windowAction,
 } from "./tauri";
 import { memoSearchText, tokenizeTags } from "./search";
+import { MemoList } from "./components/MemoList";
 
 const colors = ["#c86f52", "#6f8f83", "#5f7597", "#9a7a42", "#8a6fa8"];
 const MarkdownView = lazy(() => import("./MarkdownView"));
@@ -512,24 +513,14 @@ function WorkbenchApp() {
               Clipboard
             </button>
           </div>
-          <div className="memo-list">
-            {visibleMemos.map((memo) => (
-              <button
-                key={memo.id}
-                className={activeMemo?.id === memo.id ? "memo-row active" : "memo-row"}
-                onClick={() => {
-                  void flushPendingSave();
-                  setActiveMemoId(memo.id);
-                }}
-              >
-                <div>
-                  <strong>{memo.title}</strong>
-                  <p>{memo.body_md.replace(/[#*_`]/g, "").slice(0, 110) || "Empty memo"}</p>
-                </div>
-                <span>{new Date(memo.updated_at).toLocaleDateString()}</span>
-              </button>
-            ))}
-          </div>
+          <MemoList
+            memos={visibleMemos}
+            activeMemoId={activeMemo?.id ?? null}
+            onSelect={(id) => {
+              void flushPendingSave();
+              setActiveMemoId(id);
+            }}
+          />
         </section>
 
         <section className="editor-pane">

@@ -122,9 +122,27 @@ struct MemosChangedPayload {
     active_memo_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SecondInstanceIntent {
+    ShowMain,
+    QuickCapture,
+    ClipboardCapture,
+    Settings,
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(
+            |app, argv, _working_directory| match second_instance_intent(&argv) {
+                SecondInstanceIntent::ShowMain => {
+                    let _ = reveal_window(app, false);
+                }
+                SecondInstanceIntent::QuickCapture => spawn_quick_capture(app.clone(), false),
+                SecondInstanceIntent::ClipboardCapture => spawn_quick_capture(app.clone(), true),
+                SecondInstanceIntent::Settings => spawn_settings_window(app.clone()),
+            },
+        ))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -580,6 +598,24 @@ fn emit_memos_changed(app: &tauri::AppHandle, active_memo_id: Option<String>) {
     let _ = app.emit(EVENT_MEMOS_CHANGED, MemosChangedPayload { active_memo_id });
 }
 
+fn second_instance_intent(argv: &[String]) -> SecondInstanceIntent {
+    for arg in argv.iter().map(|arg| arg.to_ascii_lowercase()) {
+        if arg == "--clipboard-capture"
+            || arg == "--capture-clipboard"
+            || arg == "memo-sync://clipboard-capture"
+        {
+            return SecondInstanceIntent::ClipboardCapture;
+        }
+        if arg == "--quick-capture" || arg == "--capture" || arg == "memo-sync://quick-capture" {
+            return SecondInstanceIntent::QuickCapture;
+        }
+        if arg == "--settings" || arg == "memo-sync://settings" {
+            return SecondInstanceIntent::Settings;
+        }
+    }
+    SecondInstanceIntent::ShowMain
+}
+
 fn setup_shortcuts(app: &tauri::AppHandle, settings: &AppSettings) -> anyhow::Result<()> {
     validate_settings(settings).map_err(anyhow::Error::msg)?;
     register_shortcut_handlers(app, settings).map_err(|error| anyhow::anyhow!(error))
@@ -885,5 +921,28 @@ mod tests {
         };
 
         assert!(validate_settings(&settings).is_err());
+    }
+
+    #[test]
+    fn second_instance_args_choose_specific_windows() {
+        assert_eq!(
+            second_instance_intent(&["memo-desktop".to_string()]),
+            SecondInstanceIntent::ShowMain
+        );
+        assert_eq!(
+            second_instance_intent(&["memo-desktop".to_string(), "--quick-capture".to_string()]),
+            SecondInstanceIntent::QuickCapture
+        );
+        assert_eq!(
+            second_instance_intent(&[
+                "memo-desktop".to_string(),
+                "--clipboard-capture".to_string()
+            ]),
+            SecondInstanceIntent::ClipboardCapture
+        );
+        assert_eq!(
+            second_instance_intent(&["memo-desktop".to_string(), "--settings".to_string()]),
+            SecondInstanceIntent::Settings
+        );
     }
 }
