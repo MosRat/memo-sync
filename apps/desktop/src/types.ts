@@ -88,7 +88,7 @@ export interface ShortcutCheckResult {
 
 export type RenderFormat = "markdown" | "typst";
 export type PreviewRenderPath = "auto" | "typst-inline" | "typst-asset" | "markdown";
-export type RenderTemplate = "literary" | "compact" | "technical";
+export type RenderTemplate = "literary" | "compact" | "technical" | "magazine" | "notebook";
 
 export interface RenderMemoOutput {
   svg: string;

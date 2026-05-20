@@ -52,6 +52,8 @@ pub enum RenderTemplate {
     Literary,
     Compact,
     Technical,
+    Magazine,
+    Notebook,
 }
 
 fn default_render_template() -> RenderTemplate {
@@ -319,6 +321,38 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
 )
 "##
         }
+        RenderTemplate::Magazine => {
+            r##"
+#set page(width: 334pt, height: auto, margin: (x: 15pt, y: 11pt), fill: none)
+#set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Georgia", "New Computer Modern"), size: 15.2pt, lang: "zh", fill: rgb("#201b16"))
+#set par(leading: 0.8em, justify: false, spacing: 0.5em)
+#show heading: it => block(above: 0.18em, below: 0.22em, text(weight: 760, fill: rgb("#15120f"), it))
+#show emph: it => text(style: "italic", fill: rgb("#755b45"), it)
+#show raw: it => block(
+  fill: rgb("#211f1b"),
+  radius: 5pt,
+  inset: 8.5pt,
+  width: 100%,
+  text(font: ("Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 10pt, fill: rgb("#f6efe4"), it)
+)
+"##
+        }
+        RenderTemplate::Notebook => {
+            r##"
+#set page(width: 318pt, height: auto, margin: (x: 13pt, y: 9pt), fill: none)
+#set text(font: ("Noto Sans CJK SC", "Microsoft YaHei", "Inter", "New Computer Modern"), size: 13.4pt, lang: "zh", fill: rgb("#282521"))
+#set par(leading: 0.6em, justify: false, spacing: 0.28em)
+#show heading: it => block(above: 0.16em, below: 0.14em, text(weight: 730, fill: rgb("#22201d"), it))
+#show quote: it => block(stroke: (left: 2pt + rgb("#c86f52")), inset: (left: 8pt), above: 0.28em, below: 0.2em, text(fill: rgb("#675a50"), it))
+#show raw: it => block(
+  fill: rgb("#1f2924"),
+  radius: 4pt,
+  inset: 7pt,
+  width: 100%,
+  text(font: ("Cascadia Code", "JetBrains Mono", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.4pt, fill: rgb("#e9f2ea"), it)
+)
+"##
+        }
     };
     format!(
         r#"{prelude}
@@ -493,6 +527,8 @@ fn cache_key(body: &str, format: RenderFormat, template: RenderTemplate) -> Stri
         RenderTemplate::Literary => b"literary".as_slice(),
         RenderTemplate::Compact => b"compact".as_slice(),
         RenderTemplate::Technical => b"technical".as_slice(),
+        RenderTemplate::Magazine => b"magazine".as_slice(),
+        RenderTemplate::Notebook => b"notebook".as_slice(),
     });
     hasher.update(body.as_bytes());
     format!("{:x}", hasher.finalize())
@@ -659,5 +695,27 @@ mod tests {
             !output.svg.contains("fill=\"#ffffff\""),
             "preview SVG should not paint its own white page"
         );
+    }
+
+    #[test]
+    fn every_preview_template_renders_text_and_code() {
+        for template in [
+            RenderTemplate::Literary,
+            RenderTemplate::Compact,
+            RenderTemplate::Technical,
+            RenderTemplate::Magazine,
+            RenderTemplate::Notebook,
+        ] {
+            let output = render_memo(RenderMemoInput {
+                body: "# Preview\n\n中文 typography sample.\n\n```rust\nfn main() {}\n```"
+                    .to_string(),
+                format: RenderFormat::Markdown,
+                template,
+            })
+            .unwrap();
+
+            assert!(svg_has_text_geometry(&output.svg));
+            assert!(output.svg.matches("<use").count() > 20);
+        }
     }
 }

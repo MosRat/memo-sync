@@ -1143,8 +1143,13 @@ fn validate_settings(settings: &AppSettings) -> Result<(), String> {
         }
     }
     match settings.preview_template.as_str() {
-        "literary" | "compact" | "technical" => {}
-        _ => return Err("Preview template must be literary, compact, or technical".to_string()),
+        "literary" | "compact" | "technical" | "magazine" | "notebook" => {}
+        _ => {
+            return Err(
+                "Preview template must be literary, compact, technical, magazine, or notebook"
+                    .to_string(),
+            )
+        }
     }
     if !(15..=3600).contains(&settings.auto_sync_interval_secs) {
         return Err("Auto sync interval must be between 15 and 3600 seconds".to_string());

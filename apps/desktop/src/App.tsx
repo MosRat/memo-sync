@@ -34,7 +34,7 @@ import {
   X,
 } from "lucide-react";
 import { type CSSProperties, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AppSettings, LocalStats, Memo, Repository, SaveMemoInput } from "./types";
+import type { AppSettings, LocalStats, Memo, RenderTemplate, Repository, SaveMemoInput } from "./types";
 import {
   bootstrap,
   captureClipboardMemo,
@@ -99,6 +99,14 @@ const viewFilters: Array<{ id: ViewFilter; label: string; icon: typeof FileText 
   { id: "archived", label: "Archive", icon: Archive },
   { id: "clipboard", label: "Clips", icon: Clipboard },
   { id: "quick", label: "Quick", icon: Sparkles },
+];
+
+const previewTemplateOptions: Array<{ value: RenderTemplate; label: string; detail: string }> = [
+  { value: "literary", label: "Literary serif", detail: "serif, roomy" },
+  { value: "compact", label: "Compact notes", detail: "dense" },
+  { value: "technical", label: "Technical code", detail: "code first" },
+  { value: "magazine", label: "Magazine", detail: "editorial" },
+  { value: "notebook", label: "Notebook", detail: "annotation" },
 ];
 
 export function App() {
@@ -964,6 +972,13 @@ function WorkbenchApp() {
     notify("success", "Settings saved");
   }
 
+  async function handlePreviewTemplateChange(preview_template: RenderTemplate) {
+    const next = { ...settings, preview_template };
+    const saved = await updateAppSettings(next);
+    setSettings(saved);
+    setSyncText("Preview style updated");
+  }
+
   return (
     <main className={`shell ${isDesktopApp ? "desktop-shell" : "web-shell"} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       {isDesktopApp && (
@@ -1188,6 +1203,20 @@ function WorkbenchApp() {
                   <input className="title-input" value={activeMemo.title} onChange={(event) => handleSave({ title: event.target.value }, { debounce: true })} />
                 </div>
                 <div className="toolbar">
+                  {mode !== "edit" && (
+                    <select
+                      className="template-select"
+                      title="Preview style"
+                      value={settings.preview_template}
+                      onChange={(event) => void handlePreviewTemplateChange(event.target.value as RenderTemplate)}
+                    >
+                      {previewTemplateOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                   <button className={activeMemo.pinned ? "icon-button active" : "icon-button"} title="Pin" onClick={() => handleSave({ pinned: !activeMemo.pinned })}>
                     <Pin size={17} />
                   </button>
@@ -1356,6 +1385,7 @@ function WorkbenchApp() {
 
 function QuickCaptureWindow() {
   const [repositories, setRepositories] = useState<Repository[]>([]);
+  const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [quickRepo, setQuickRepo] = useState("");
   const [quickText, setQuickText] = useState("");
   const [message, setMessage] = useState("");
@@ -1371,6 +1401,7 @@ function QuickCaptureWindow() {
   useEffect(() => {
     bootstrap().then((data) => {
       setRepositories(data.repositories);
+      setSettings(data.settings);
       setQuickRepo(data.repositories[0]?.id ?? "");
     });
     const unsubs: Array<() => void> = [];
@@ -1513,7 +1544,7 @@ function QuickCaptureWindow() {
           />
           <article className="capture-preview markdown preview-surface">
             {quickText.trim() ? (
-              <TypstPreview body={quickText} format="markdown" renderPath="typst-inline" template="literary" />
+              <TypstPreview body={quickText} format="markdown" renderPath={settings.preview_render_path === "markdown" ? "typst-inline" : settings.preview_render_path} template={settings.preview_template} />
             ) : (
               <p className="preview-empty">Typst preview</p>
             )}
@@ -1772,9 +1803,11 @@ function AppDialog({
             <label>
               <span>Typst template</span>
               <select value={draft.preview_template} onChange={(event) => setDraft({ ...draft, preview_template: event.target.value as AppSettings["preview_template"] })}>
-                <option value="literary">Literary serif</option>
-                <option value="compact">Compact notes</option>
-                <option value="technical">Technical code</option>
+                {previewTemplateOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label} - {option.detail}
+                  </option>
+                ))}
               </select>
             </label>
             <label className="toggle setting-toggle">

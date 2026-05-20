@@ -1,3 +1,4 @@
+import { Copy } from "lucide-react";
 import { lazy, memo, Suspense, useEffect, useRef, useState } from "react";
 import { isDesktopApp, renderMemoPreview, renderMemoPreviewAsset } from "../tauri";
 import type { PreviewRenderPath, RenderFormat, RenderPageAssetOutput, RenderTemplate } from "../types";
@@ -5,7 +6,7 @@ import type { PreviewRenderPath, RenderFormat, RenderPageAssetOutput, RenderTemp
 const MarkdownView = lazy(() => import("../MarkdownView"));
 const PREVIEW_CACHE_MAX_ENTRIES = 18;
 const PREVIEW_CACHE_MAX_BYTES = 12 * 1024 * 1024;
-const PREVIEW_CACHE_VERSION = "typst-compact-page-v7";
+const PREVIEW_CACHE_VERSION = "typst-template-set-v8";
 
 type RenderState =
   | { kind: "idle" | "loading" | "markdown" }
@@ -102,6 +103,7 @@ function TypstPreviewView({
   template: RenderTemplate;
 }) {
   const [state, setState] = useState<RenderState>({ kind: "idle" });
+  const [copyText, setCopyText] = useState("Copy SVG");
   const requestIdRef = useRef(0);
   const effectivePath = renderPath === "auto" ? "typst-inline" : renderPath;
 
@@ -191,12 +193,32 @@ function TypstPreviewView({
     };
   }, [body, effectivePath, format, template]);
 
+  async function copyRenderedSvg() {
+    if (state.kind !== "ready") return;
+    const svgText = state.svg ?? state.pages?.map((page) => page.svg).filter((svg): svg is string => Boolean(svg)).join("\n") ?? "";
+    if (!svgText) return;
+    try {
+      await navigator.clipboard.writeText(svgText);
+      setCopyText("Copied");
+      window.setTimeout(() => setCopyText("Copy SVG"), 1200);
+    } catch {
+      setCopyText("Copy failed");
+      window.setTimeout(() => setCopyText("Copy SVG"), 1400);
+    }
+  }
+
   if (state.kind === "ready") {
+    const canCopySvg = Boolean(state.svg || state.pages?.some((page) => page.svg));
     return (
       <div className="typst-preview">
         <div className="render-status">
           <span>{state.transport === "asset" ? "Typst asset" : "Typst SVG"}</span>
-          <span>{state.cached ? "cache hit" : `${state.elapsedMs}ms`}</span>
+          <span className="render-status-actions">
+            <span>{state.cached ? "cache hit" : `${state.elapsedMs}ms`}</span>
+            <button title={copyText} aria-label={copyText} onClick={copyRenderedSvg} disabled={!canCopySvg}>
+              <Copy size={12} />
+            </button>
+          </span>
         </div>
         {state.url ? (
           <PreviewAsset
