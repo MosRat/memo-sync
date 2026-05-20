@@ -77,7 +77,15 @@ function MemoListView({
                 <strong>{item.title}</strong>
                 <p>{item.body_md.replace(/[#*_`]/g, "").slice(0, 110) || "Empty memo"}</p>
               </div>
-              <span>{new Date(item.updated_at).toLocaleDateString()}</span>
+              <footer>
+                <span>{new Date(item.updated_at).toLocaleDateString()}</span>
+                {item.pinned && <em>Pinned</em>}
+                {item.archived && <em>Archived</em>}
+                {item.source !== "Manual" && <em>{item.source === "QuickCapture" ? "Quick" : item.source}</em>}
+                {item.tags.slice(0, 2).map((tag) => (
+                  <em key={tag}>#{tag}</em>
+                ))}
+              </footer>
             </button>
           );
         })}

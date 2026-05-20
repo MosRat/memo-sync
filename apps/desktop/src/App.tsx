@@ -84,6 +84,15 @@ const emptyStats: LocalStats = {
 type Mode = "edit" | "preview" | "split";
 type Dialog = "settings" | "shortcuts" | "about" | null;
 type CaptureMode = "edit" | "split" | "preview";
+type ViewFilter = "active" | "pinned" | "archived" | "clipboard" | "quick";
+
+const viewFilters: Array<{ id: ViewFilter; label: string; icon: typeof FileText }> = [
+  { id: "active", label: "Inbox", icon: FileText },
+  { id: "pinned", label: "Pinned", icon: Pin },
+  { id: "archived", label: "Archive", icon: Archive },
+  { id: "clipboard", label: "Clips", icon: Clipboard },
+  { id: "quick", label: "Quick", icon: Sparkles },
+];
 
 export function App() {
   const windowLabel = currentWindowLabel();
@@ -104,6 +113,7 @@ function WorkbenchApp() {
   const [activeMemoId, setActiveMemoId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [viewFilter, setViewFilter] = useState<ViewFilter>("active");
   const [mode, setMode] = useState<Mode>("split");
   const [quickOpen, setQuickOpen] = useState(false);
   const [quickText, setQuickText] = useState("");
@@ -181,9 +191,14 @@ function WorkbenchApp() {
         repository_id: activeRepo === "all" ? null : activeRepo,
         query: query.trim() || null,
         tags: tagFilter ? [tagFilter] : [],
-        pinned: null,
-        archived: null,
-        source: null,
+        pinned: viewFilter === "pinned" ? true : null,
+        archived:
+          viewFilter === "archived"
+            ? true
+            : viewFilter === "active" || viewFilter === "pinned" || viewFilter === "clipboard" || viewFilter === "quick"
+              ? false
+              : null,
+        source: viewFilter === "clipboard" ? "Clipboard" : viewFilter === "quick" ? "QuickCapture" : null,
       }).then((results) => {
         if (searchRequestRef.current !== requestId) return;
         setMemos(results);
@@ -193,7 +208,7 @@ function WorkbenchApp() {
       });
     }, 140);
     return () => window.clearTimeout(handle);
-  }, [activeRepo, query, tagFilter]);
+  }, [activeRepo, query, tagFilter, viewFilter]);
 
   function applyBootstrap(data: Awaited<ReturnType<typeof bootstrap>>, preferredMemoId?: string | null) {
     setRepositories(data.repositories);
@@ -210,6 +225,7 @@ function WorkbenchApp() {
       setActiveRepo("all");
       setTagFilter(null);
       setQuery("");
+      setViewFilter("active");
       setActiveMemoId(preferredMemoId);
     } else {
       setActiveMemoId((current) => current ?? data.memos[0]?.id ?? null);
@@ -222,14 +238,21 @@ function WorkbenchApp() {
       if (memo.deleted) return false;
       if (activeRepo !== "all" && memo.repository_id !== activeRepo) return false;
       if (tagFilter && !memo.tags.includes(tagFilter)) return false;
+      if (viewFilter === "active" && memo.archived) return false;
+      if (viewFilter === "pinned" && (!memo.pinned || memo.archived)) return false;
+      if (viewFilter === "archived" && !memo.archived) return false;
+      if (viewFilter === "clipboard" && (memo.source !== "Clipboard" || memo.archived)) return false;
+      if (viewFilter === "quick" && (memo.source !== "QuickCapture" || memo.archived)) return false;
       if (!lower) return true;
       return memoSearchText(memo).includes(lower);
     });
-  }, [activeRepo, memos, query, tagFilter]);
+  }, [activeRepo, memos, query, tagFilter, viewFilter]);
 
   const activeMemo = visibleMemos.find((memo) => memo.id === activeMemoId) ?? visibleMemos[0] ?? null;
   const tags = allTags;
   const activeRepository = repositories.find((repo) => repo.id === activeMemo?.repository_id);
+  const activeRepoName = activeRepo === "all" ? "All notes" : repositories.find((repo) => repo.id === activeRepo)?.name ?? "Repository";
+  const activeViewLabel = viewFilters.find((item) => item.id === viewFilter)?.label ?? "Inbox";
   const captureRepoId = activeRepo !== "all" ? activeRepo : quickRepo || repositories[0]?.id || "";
 
   const notify = useCallback((kind: ToastKind, title: string, detail?: string) => {
@@ -303,6 +326,7 @@ function WorkbenchApp() {
     {
       id: "new-memo",
       title: "New memo",
+      category: "Action",
       detail: activeRepo === "all" ? "Create in the first repository" : "Create in current repository",
       shortcut: "Ctrl N",
       run: () => handleNewMemo(),
@@ -310,6 +334,7 @@ function WorkbenchApp() {
     {
       id: "quick-capture",
       title: "Quick capture",
+      category: "Action",
       detail: "Open the floating capture window",
       shortcut: "Ctrl J",
       run: () => showQuickCaptureWindow(),
@@ -317,6 +342,7 @@ function WorkbenchApp() {
     {
       id: "clipboard",
       title: "Capture clipboard",
+      category: "Action",
       detail: "Save clipboard text into the selected repository",
       run: () => {
         if (captureRepoId) return handleClipboardCapture(captureRepoId);
@@ -325,12 +351,14 @@ function WorkbenchApp() {
     {
       id: "sync",
       title: "Sync now",
+      category: "Action",
       detail: syncText,
       run: () => handleSync(),
     },
     {
       id: "search",
       title: "Focus search",
+      category: "Action",
       detail: "Search text, tags, and metadata",
       shortcut: "Ctrl K",
       run: () => {
@@ -341,44 +369,89 @@ function WorkbenchApp() {
     {
       id: "clear-filters",
       title: "Clear filters",
+      category: "Action",
       detail: "Show all notes again",
       run: () => {
         setActiveRepo("all");
         setTagFilter(null);
         setQuery("");
+        setViewFilter("active");
       },
     },
+    ...viewFilters.map((item) => ({
+      id: `view-${item.id}`,
+      title: item.label,
+      category: "View",
+      detail: "Switch memo list",
+      run: () => setViewFilter(item.id),
+    })),
     {
       id: "mode-split",
       title: "Editor and preview",
+      category: "View",
       detail: "Use split writing mode",
       run: () => setMode("split"),
     },
     {
       id: "mode-edit",
       title: "Editor only",
+      category: "View",
       detail: "Focus on Markdown input",
       run: () => setMode("edit"),
     },
     {
       id: "mode-preview",
       title: "Preview only",
+      category: "View",
       detail: "Read the rendered memo",
       run: () => setMode("preview"),
     },
     {
       id: "toggle-sidebar",
       title: sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar",
+      category: "View",
       detail: "Change navigation density",
       run: () => setSidebarCollapsed((value) => !value),
     },
     {
       id: "settings",
       title: "Settings",
+      category: "App",
       detail: "Sync endpoint, shortcuts, and about",
       run: () => (isDesktopApp ? showSettingsWindow() : setDialog("settings")),
     },
+    ...repositories.map((repo) => ({
+      id: `repo-${repo.id}`,
+      title: repo.name,
+      category: "Repository",
+      detail: repo.kind === "Temporary" ? "Temporary notes" : "Persistent sync repository",
+      run: () => {
+        setActiveRepo(repo.id);
+        setTagFilter(null);
+      },
+    })),
+    ...tags.slice(0, 32).map((tag) => ({
+      id: `tag-${tag}`,
+      title: tag,
+      category: "Tag",
+      detail: "Filter notes by tag",
+      run: () => setTagFilter(tag),
+    })),
+    ...visibleMemos.slice(0, 24).map((memo) => ({
+      id: `memo-${memo.id}`,
+      title: memo.title,
+      category: "Memo",
+      detail: memo.body_md.replace(/[#*_`]/g, "").slice(0, 86) || "Empty memo",
+      run: () => {
+        setActiveRepo("all");
+        setTagFilter(null);
+        setQuery("");
+        setActiveMemoId(memo.id);
+      },
+    })),
   ];
+
+  const hasFilters = activeRepo !== "all" || viewFilter !== "active" || Boolean(tagFilter) || Boolean(query.trim());
 
   function memoInputFrom(memo: Memo, patch: Partial<SaveMemoInput> = {}): SaveMemoInput {
     return {
@@ -590,7 +663,7 @@ function WorkbenchApp() {
           <button className={activeRepo === "all" ? "repo active" : "repo"} title="All notes" onClick={() => setActiveRepo("all")}>
             <span className="repo-dot all" />
             <span>All notes</span>
-            <strong>{memos.filter((memo) => !memo.deleted).length}</strong>
+            <strong>{localStats.memo_count}</strong>
           </button>
 
           {repositories.map((repo) => (
@@ -665,6 +738,52 @@ function WorkbenchApp() {
           <div className="searchbar">
             <Search size={18} />
             <input ref={searchInputRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search text, tags, metadata" />
+          </div>
+          <div className="list-context">
+            <span>
+              <strong>{visibleMemos.length}</strong>
+              {visibleMemos.length === 1 ? "memo" : "memos"}
+            </span>
+            <button className={viewFilter !== "active" ? "context-chip active" : "context-chip"} onClick={() => setViewFilter("active")}>
+              {activeViewLabel}
+            </button>
+            <button className={activeRepo !== "all" ? "context-chip active" : "context-chip"} onClick={() => setActiveRepo("all")}>
+              {activeRepoName}
+            </button>
+            {tagFilter && (
+              <button className="context-chip active" onClick={() => setTagFilter(null)}>
+                #{tagFilter}
+              </button>
+            )}
+            {query.trim() && (
+              <button className="context-chip active" onClick={() => setQuery("")}>
+                {query.trim()}
+              </button>
+            )}
+            {hasFilters && (
+              <button
+                className="context-clear"
+                onClick={() => {
+                  setActiveRepo("all");
+                  setTagFilter(null);
+                  setQuery("");
+                  setViewFilter("active");
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <div className="view-switcher" role="tablist" aria-label="Memo views">
+            {viewFilters.map((item) => {
+              const Icon = item.icon;
+              return (
+                <button key={item.id} className={viewFilter === item.id ? "active" : ""} onClick={() => setViewFilter(item.id)} aria-pressed={viewFilter === item.id}>
+                  <Icon size={14} />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
           </div>
           <div className="list-actions">
             <button className="primary" onClick={handleNewMemo}>

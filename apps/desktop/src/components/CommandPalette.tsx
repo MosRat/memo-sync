@@ -5,6 +5,7 @@ export interface CommandItem {
   id: string;
   title: string;
   detail?: string;
+  category?: string;
   shortcut?: string;
   run: () => void | Promise<void>;
 }
@@ -84,7 +85,10 @@ function CommandPaletteView({
               onClick={() => void run(command)}
             >
               <span>
-                <strong>{command.title}</strong>
+                <strong>
+                  {command.category && <em>{command.category}</em>}
+                  {command.title}
+                </strong>
                 {command.detail && <small>{command.detail}</small>}
               </span>
               {command.shortcut && <kbd>{command.shortcut}</kbd>}
