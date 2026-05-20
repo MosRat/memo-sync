@@ -38,10 +38,12 @@ import {
   createRepository,
   currentWindowLabel,
   deleteMemo,
-  emitAppEvent,
+  emitMemosChanged,
+  APP_EVENTS,
   isDesktopApp,
   listenCurrentWindowFocus,
   listenAppEvent,
+  listenMemosChanged,
   readClipboardText,
   saveMemo,
   saveQuickMemo,
@@ -67,7 +69,6 @@ const defaultSettings: AppSettings = {
 type Mode = "edit" | "preview" | "split";
 type Dialog = "settings" | "shortcuts" | "about" | null;
 type CaptureMode = "edit" | "split" | "preview";
-type MemosChangedPayload = { active_memo_id?: string | null };
 
 export function App() {
   const windowLabel = currentWindowLabel();
@@ -98,8 +99,11 @@ function WorkbenchApp() {
   const [deviceId, setDeviceId] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null);
+  const [saveText, setSaveText] = useState("Saved");
   const quickRepoRef = useRef("");
   const repositoriesRef = useRef<Repository[]>([]);
+  const saveTimerRef = useRef<number | null>(null);
+  const pendingSaveRef = useRef<SaveMemoInput | null>(null);
 
   useEffect(() => {
     quickRepoRef.current = quickRepo;
@@ -112,21 +116,25 @@ function WorkbenchApp() {
   useEffect(() => {
     bootstrap().then(applyBootstrap);
     const unsubs: Array<() => void> = [];
-    listenAppEvent("open-quick-capture", () => {
+    listenAppEvent(APP_EVENTS.openQuickCapture, () => {
       if (!isDesktopApp) setQuickOpen(true);
     }).then((unsub) => unsubs.push(unsub));
-    listenAppEvent("clipboard-capture-requested", async () => {
+    listenAppEvent(APP_EVENTS.clipboardCaptureRequested, async () => {
       if (isDesktopApp) return;
       const repoId = quickRepoRef.current || repositoriesRef.current[0]?.id || "";
       if (repoId) setQuickRepo(repoId);
       setQuickOpen(true);
       setQuickText(await readClipboardText());
     }).then((unsub) => unsubs.push(unsub));
-    listenAppEvent<MemosChangedPayload>("memos-changed", async (payload) => {
+    listenMemosChanged(async (payload) => {
       const refreshed = await bootstrap();
       applyBootstrap(refreshed, payload.active_memo_id ?? null);
     }).then((unsub) => unsubs.push(unsub));
-    return () => unsubs.forEach((unsub) => unsub());
+    return () => {
+      if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+      if (pendingSaveRef.current) void saveMemo(pendingSaveRef.current);
+      unsubs.forEach((unsub) => unsub());
+    };
   }, []);
 
   function applyBootstrap(data: Awaited<ReturnType<typeof bootstrap>>, preferredMemoId?: string | null) {
@@ -164,20 +172,92 @@ function WorkbenchApp() {
   const activeRepository = repositories.find((repo) => repo.id === activeMemo?.repository_id);
   const captureRepoId = activeRepo !== "all" ? activeRepo : quickRepo || repositories[0]?.id || "";
 
-  async function handleSave(patch: Partial<SaveMemoInput>) {
-    const repo = activeMemo?.repository_id ?? (repositories[0]?.id || quickRepo);
-    if (!repo) return;
-    const saved = await saveMemo({
-      id: activeMemo?.id ?? null,
-      repository_id: repo,
-      title: patch.title ?? activeMemo?.title ?? "",
-      body_md: patch.body_md ?? activeMemo?.body_md ?? "",
-      tags: patch.tags ?? activeMemo?.tags ?? [],
-      pinned: patch.pinned ?? activeMemo?.pinned ?? false,
-      archived: patch.archived ?? activeMemo?.archived ?? false,
-    });
+  function memoInputFrom(memo: Memo, patch: Partial<SaveMemoInput> = {}): SaveMemoInput {
+    return {
+      id: memo.id,
+      repository_id: patch.repository_id ?? memo.repository_id,
+      title: patch.title ?? memo.title,
+      body_md: patch.body_md ?? memo.body_md,
+      tags: patch.tags ?? memo.tags,
+      pinned: patch.pinned ?? memo.pinned,
+      archived: patch.archived ?? memo.archived,
+    };
+  }
+
+  function optimisticMemo(memo: Memo, patch: Partial<SaveMemoInput>): Memo {
+    const body = patch.body_md ?? memo.body_md;
+    return {
+      ...memo,
+      repository_id: patch.repository_id ?? memo.repository_id,
+      title: patch.title ?? memo.title,
+      body_md: body,
+      tags: patch.tags ?? memo.tags,
+      pinned: patch.pinned ?? memo.pinned,
+      archived: patch.archived ?? memo.archived,
+      updated_at: new Date().toISOString(),
+      meta: { ...memo.meta, byte_len: body.length },
+    };
+  }
+
+  function replaceMemo(saved: Memo) {
     setMemos((items) => [saved, ...items.filter((item) => item.id !== saved.id)]);
     setActiveMemoId(saved.id);
+  }
+
+  async function flushPendingSave() {
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const pending = pendingSaveRef.current;
+    if (!pending) return;
+    pendingSaveRef.current = null;
+    setSaveText("Saving...");
+    try {
+      const saved = await saveMemo(pending);
+      replaceMemo(saved);
+      setSaveText("Saved");
+    } catch (error) {
+      pendingSaveRef.current = pending;
+      setSaveText(error instanceof Error ? "Save failed" : "Save failed");
+    }
+  }
+
+  function queueSave(patch: Partial<SaveMemoInput>) {
+    if (!activeMemo) return;
+    const optimistic = optimisticMemo(activeMemo, patch);
+    setMemos((items) => [optimistic, ...items.filter((item) => item.id !== optimistic.id)]);
+    setActiveMemoId(optimistic.id);
+    pendingSaveRef.current = memoInputFrom(optimistic);
+    setSaveText("Editing...");
+    if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => {
+      void flushPendingSave();
+    }, 650);
+  }
+
+  async function handleSave(patch: Partial<SaveMemoInput>, options: { debounce?: boolean } = {}) {
+    const repo = activeMemo?.repository_id ?? (repositories[0]?.id || quickRepo);
+    if (!repo) return;
+    if (options.debounce && activeMemo) {
+      queueSave(patch);
+      return;
+    }
+    await flushPendingSave();
+    const saved = await saveMemo(
+      activeMemo
+        ? memoInputFrom(activeMemo, patch)
+        : {
+            id: null,
+            repository_id: repo,
+            title: patch.title ?? "",
+            body_md: patch.body_md ?? "",
+            tags: patch.tags ?? [],
+            pinned: patch.pinned ?? false,
+            archived: patch.archived ?? false,
+          },
+    );
+    replaceMemo(saved);
   }
 
   async function handleNewMemo() {
@@ -198,6 +278,7 @@ function WorkbenchApp() {
   }
 
   async function handleDelete(id: string) {
+    await flushPendingSave();
     await deleteMemo(id);
     setMemos((items) => items.filter((item) => item.id !== id));
     setActiveMemoId(null);
@@ -238,6 +319,7 @@ function WorkbenchApp() {
   }
 
   async function handleSync() {
+    await flushPendingSave();
     setSyncText("Syncing");
     try {
       const result = await syncNow(serverUrl);
@@ -366,7 +448,10 @@ function WorkbenchApp() {
               <button
                 key={memo.id}
                 className={activeMemo?.id === memo.id ? "memo-row active" : "memo-row"}
-                onClick={() => setActiveMemoId(memo.id)}
+                onClick={() => {
+                  void flushPendingSave();
+                  setActiveMemoId(memo.id);
+                }}
               >
                 <div>
                   <strong>{memo.title}</strong>
@@ -384,7 +469,7 @@ function WorkbenchApp() {
               <div className="editor-header">
                 <div>
                   <p className="eyebrow">{activeRepository?.name ?? "Repository"}</p>
-                  <input className="title-input" value={activeMemo.title} onChange={(event) => handleSave({ title: event.target.value })} />
+                  <input className="title-input" value={activeMemo.title} onChange={(event) => handleSave({ title: event.target.value }, { debounce: true })} />
                 </div>
                 <div className="toolbar">
                   <button className={activeMemo.pinned ? "icon-button active" : "icon-button"} title="Pin" onClick={() => handleSave({ pinned: !activeMemo.pinned })}>
@@ -412,12 +497,13 @@ function WorkbenchApp() {
                 <span>{activeMemo.meta.byte_len} bytes</span>
                 <span>{activeMemo.source}</span>
                 <span>{deviceId.slice(0, 24)}</span>
+                <span className={saveText === "Saved" ? "save-state saved" : "save-state"}>{saveText}</span>
                 <input
                   value={activeMemo.tags.join(", ")}
                   onChange={(event) =>
                     handleSave({
                       tags: tokenizeTags(event.target.value),
-                    })
+                    }, { debounce: true })
                   }
                   placeholder="tags"
                 />
@@ -425,7 +511,7 @@ function WorkbenchApp() {
 
               <div className={`editor-grid ${mode}`}>
                 {mode !== "preview" && (
-                  <textarea value={activeMemo.body_md} onChange={(event) => handleSave({ body_md: event.target.value })} spellCheck={false} />
+                  <textarea value={activeMemo.body_md} onChange={(event) => handleSave({ body_md: event.target.value }, { debounce: true })} spellCheck={false} />
                 )}
                 {mode !== "edit" && (
                   <article className="markdown">
@@ -520,12 +606,12 @@ function QuickCaptureWindow() {
       setQuickRepo(data.repositories[0]?.id ?? "");
     });
     const unsubs: Array<() => void> = [];
-    listenAppEvent("open-quick-capture", () => {
+    listenAppEvent(APP_EVENTS.openQuickCapture, () => {
       activeRef.current = true;
       setMessage("");
       window.setTimeout(() => textAreaRef.current?.focus(), 40);
     }).then((unsub) => unsubs.push(unsub));
-    listenAppEvent("clipboard-capture-requested", async () => {
+    listenAppEvent(APP_EVENTS.clipboardCaptureRequested, async () => {
       setQuickText(await readClipboardText());
       activeRef.current = true;
       window.setTimeout(() => textAreaRef.current?.focus(), 40);
@@ -551,7 +637,7 @@ function QuickCaptureWindow() {
       archived: false,
     });
     setMessage(`Saved: ${saved.title}`);
-    await emitAppEvent<MemosChangedPayload>("memos-changed", { active_memo_id: saved.id });
+    await emitMemosChanged({ active_memo_id: saved.id });
     setQuickText("");
     activeRef.current = false;
     window.setTimeout(() => windowAction("window_close"), 180);

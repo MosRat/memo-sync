@@ -6,6 +6,14 @@ import type { AppSettings, Bootstrap, Memo, Repository, SaveMemoInput, ShortcutC
 const isTauri = "__TAURI_INTERNALS__" in window;
 export const isDesktopApp = isTauri;
 
+export const APP_EVENTS = {
+  openQuickCapture: "open-quick-capture",
+  clipboardCaptureRequested: "clipboard-capture-requested",
+  memosChanged: "memos-changed",
+} as const;
+
+export type MemosChangedPayload = { active_memo_id?: string | null };
+
 export function currentWindowLabel() {
   if (!isTauri) return "web";
   try {
@@ -200,6 +208,14 @@ export function emitAppEvent<T>(name: string, payload: T) {
 export function listenAppEvent<T = unknown>(name: string, handler: (payload: T) => void) {
   if (!isTauri) return Promise.resolve(() => {});
   return listen<T>(name, (event) => handler(event.payload));
+}
+
+export function emitMemosChanged(payload: MemosChangedPayload) {
+  return emitAppEvent(APP_EVENTS.memosChanged, payload);
+}
+
+export function listenMemosChanged(handler: (payload: MemosChangedPayload) => void) {
+  return listenAppEvent<MemosChangedPayload>(APP_EVENTS.memosChanged, handler);
 }
 
 function getWebSettings(): AppSettings {

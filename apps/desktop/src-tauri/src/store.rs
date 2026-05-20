@@ -10,7 +10,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
     Row, SqlitePool,
 };
-use std::{collections::BTreeSet, path::Path};
+use std::{collections::BTreeSet, path::Path, time::Duration};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -45,9 +45,12 @@ impl LocalStore {
             .synchronous(SqliteSynchronous::Normal)
             .busy_timeout(std::time::Duration::from_secs(5));
         let pool = SqlitePoolOptions::new()
-            .max_connections(4)
+            .max_connections(2)
+            .min_connections(1)
+            .acquire_timeout(Duration::from_secs(5))
             .connect_with(options)
             .await?;
+        configure_sqlite(&pool).await?;
         migrate(&pool).await?;
         let store = Self { pool };
         store.purge_temporary_memos().await?;
@@ -170,7 +173,10 @@ impl LocalStore {
     }
 
     pub async fn sync_now(&self, server_url: &str, device_id: &str) -> anyhow::Result<SyncSummary> {
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(20))
+            .pool_idle_timeout(Duration::from_secs(30))
+            .build()?;
         let pending = self.pending_operations().await?;
         let push_response = if pending.is_empty() {
             memo_core::PushResponse {
@@ -383,6 +389,9 @@ impl LocalStore {
                 .execute(&self.pool)
                 .await?;
         }
+        sqlx::query("DELETE FROM local_operations WHERE server_sequence IS NOT NULL")
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -443,6 +452,23 @@ fn desktop_client_info() -> ClientInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
         platform: std::env::consts::OS.to_string(),
     }
+}
+
+async fn configure_sqlite(pool: &SqlitePool) -> anyhow::Result<()> {
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(pool)
+        .await?;
+    sqlx::query("PRAGMA temp_store = MEMORY")
+        .execute(pool)
+        .await?;
+    sqlx::query("PRAGMA cache_size = -8000")
+        .execute(pool)
+        .await?;
+    sqlx::query("PRAGMA mmap_size = 134217728")
+        .execute(pool)
+        .await?;
+    sqlx::query("PRAGMA optimize").execute(pool).await?;
+    Ok(())
 }
 
 async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {

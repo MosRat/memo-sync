@@ -541,6 +541,16 @@ textarea:focus {
   box-shadow: inset 0 0 0 1px rgba(62, 54, 44, 0.07);
 }
 
+.metadata-strip .save-state {
+  color: #7a5b38;
+  background: rgba(232, 195, 125, 0.16);
+}
+
+.metadata-strip .save-state.saved {
+  color: #586d5d;
+  background: rgba(112, 139, 118, 0.14);
+}
+
 .metadata-strip input {
   height: 30px;
   min-width: 160px;
