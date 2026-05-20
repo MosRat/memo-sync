@@ -5,7 +5,7 @@ import type { PreviewRenderPath, RenderFormat, RenderPageAssetOutput, RenderTemp
 const MarkdownView = lazy(() => import("../MarkdownView"));
 const PREVIEW_CACHE_MAX_ENTRIES = 18;
 const PREVIEW_CACHE_MAX_BYTES = 12 * 1024 * 1024;
-const PREVIEW_CACHE_VERSION = "typst-transparent-page-v6";
+const PREVIEW_CACHE_VERSION = "typst-compact-page-v7";
 
 type RenderState =
   | { kind: "idle" | "loading" | "markdown" }
