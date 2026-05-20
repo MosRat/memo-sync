@@ -6,6 +6,7 @@ import {
   Cloud,
   Copyright,
   Code2,
+  Copy,
   Eye,
   Eraser,
   FileText,
@@ -388,6 +389,13 @@ function WorkbenchApp() {
     ...(activeMemo
       ? [
           {
+            id: "duplicate-current",
+            title: "Duplicate current memo",
+            category: "Action",
+            detail: activeMemo.title,
+            run: () => handleDuplicateMemo(activeMemo),
+          },
+          {
             id: "archive-current",
             title: activeMemo.archived ? "Restore current memo" : "Archive current memo",
             category: "Action",
@@ -402,6 +410,17 @@ function WorkbenchApp() {
             run: () => handleDelete(activeMemo.id),
           },
         ]
+      : []),
+    ...(activeMemo
+      ? repositories
+          .filter((repo) => repo.id !== activeMemo.repository_id)
+          .map((repo) => ({
+            id: `move-current-${repo.id}`,
+            title: `Move to ${repo.name}`,
+            category: "Move",
+            detail: repo.kind === "Temporary" ? "Temporary repository" : "Persistent repository",
+            run: () => handleMoveMemo(activeMemo, repo.id),
+          }))
       : []),
     ...viewFilters.map((item) => ({
       id: `view-${item.id}`,
@@ -671,6 +690,45 @@ function WorkbenchApp() {
     setActiveMemoId(saved.id);
     setMode("edit");
     notify("success", "Memo created", activeRepo === "all" ? undefined : activeRepository?.name);
+  }
+
+  async function handleDuplicateMemo(memo: Memo) {
+    await flushPendingSave();
+    const saved = await saveMemo({
+      id: null,
+      repository_id: memo.repository_id,
+      title: `${memo.title || "Untitled memo"} copy`,
+      body_md: memo.body_md,
+      tags: memo.tags,
+      pinned: false,
+      archived: false,
+    });
+    replaceMemo(saved);
+    notify("success", "Memo duplicated", saved.title, {
+      actionLabel: "Undo",
+      action: async () => {
+        await deleteMemo(saved.id);
+        setMemos((items) => items.filter((item) => item.id !== saved.id));
+        setActiveMemoId(memo.id);
+      },
+    });
+  }
+
+  async function handleMoveMemo(memo: Memo, repositoryId: string) {
+    if (memo.repository_id === repositoryId) return;
+    await flushPendingSave();
+    const target = repositories.find((repo) => repo.id === repositoryId);
+    const saved = await saveMemo(memoInputFrom(memo, { repository_id: repositoryId }));
+    replaceMemo(saved);
+    setActiveRepo(repositoryId);
+    notify("info", "Memo moved", target?.name ?? "Repository", {
+      actionLabel: "Undo",
+      action: async () => {
+        const restored = await saveMemo(memoInputFrom(saved, { repository_id: memo.repository_id }));
+        replaceMemo(restored);
+        setActiveRepo(memo.repository_id);
+      },
+    });
   }
 
   async function handleDelete(id: string) {
@@ -971,6 +1029,9 @@ function WorkbenchApp() {
                   <button className={activeMemo.pinned ? "icon-button active" : "icon-button"} title="Pin" onClick={() => handleSave({ pinned: !activeMemo.pinned })}>
                     <Pin size={17} />
                   </button>
+                  <button className="icon-button" title="Duplicate" onClick={() => handleDuplicateMemo(activeMemo)}>
+                    <Copy size={17} />
+                  </button>
                   <button className="icon-button" title="Edit" onClick={() => setMode("edit")}>
                     <FileText size={17} />
                   </button>
@@ -995,6 +1056,14 @@ function WorkbenchApp() {
                 <span>{deviceId.slice(0, 24)}</span>
                 <span className={saveText === "Saved" ? "save-state saved" : "save-state"}>{saveText}</span>
                 <span>{activeMemoStats}</span>
+                <select className="repo-select" value={activeMemo.repository_id} onChange={(event) => handleMoveMemo(activeMemo, event.target.value)}>
+                  {repositories.map((repo) => (
+                    <option key={repo.id} value={repo.id}>
+                      {repo.name}
+                      {repo.kind === "Temporary" ? " (temp)" : ""}
+                    </option>
+                  ))}
+                </select>
                 <input
                   value={activeMemo.tags.join(", ")}
                   onChange={(event) =>

@@ -785,15 +785,27 @@ textarea:focus {
   background: rgba(112, 139, 118, 0.14);
 }
 
-.metadata-strip input {
+.metadata-strip input,
+.metadata-strip select {
   height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+  text-overflow: ellipsis;
+}
+
+.metadata-strip input {
   min-width: 160px;
   width: clamp(220px, 32vw, 520px);
   max-width: min(100%, 520px);
   flex: 0 1 520px;
-  padding: 0 10px;
-  font-size: 13px;
-  text-overflow: ellipsis;
+}
+
+.metadata-strip select {
+  min-width: 132px;
+  max-width: 210px;
+  flex: 0 1 180px;
+  color: var(--ink-soft);
+  background: rgba(255, 252, 245, 0.58);
 }
 
 .writebar {
