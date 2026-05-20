@@ -33,6 +33,7 @@ Implemented safeguards:
 - page asset protocol: pages can be loaded independently through `memo-preview://localhost/page/<cacheKey>/<page>.svg`
 - Windows URL mapping: WebView2 resolves the protocol through `http://memo-preview.localhost/...`
 - page metadata: render metadata includes page dimensions so the frontend can reserve stable preview space
+- image-based preview surface: page SVGs are mounted with `<img>`, avoiding WebView2 `<object>` clipping and nested-document quirks
 - legacy SVG IPC fallback: keeps preview available if a platform rejects the asset path
 - cmarker test: ignored by default but manually runnable because package fetch may use network
 

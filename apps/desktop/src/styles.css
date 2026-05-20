@@ -1052,9 +1052,11 @@ textarea:focus {
   display: block;
   width: 100%;
   max-width: 720px;
+  height: auto;
   border: 0;
   border-radius: 8px;
   background: #fffdf8;
+  object-fit: contain;
   box-shadow: 0 16px 38px rgba(44, 37, 30, 0.08);
 }
 

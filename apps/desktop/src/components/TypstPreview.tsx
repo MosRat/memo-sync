@@ -224,14 +224,15 @@ function PreviewAsset({
   return (
     <div className="typst-preview-pages">
       {visiblePages.map((page) => (
-        <object
+        <img
           key={`${page.index}:${page.url}`}
-          aria-label={`Typst preview page ${page.index + 1}`}
+          alt={`Typst preview page ${page.index + 1}`}
           className="typst-preview-asset"
-          data={page.url}
+          decoding="async"
+          loading={page.index === 0 ? "eager" : "lazy"}
           onError={onExpired}
+          src={page.url}
           style={{ aspectRatio: `${Math.max(page.width_pt, 1)} / ${Math.max(page.height_pt, 1)}` }}
-          type="image/svg+xml"
         />
       ))}
     </div>
