@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { AppSettings, Bootstrap, LocalStats, Memo, Repository, SaveMemoInput, ShortcutCheckResult } from "./types";
+import type { AppSettings, Bootstrap, LocalStats, Memo, MemoFilter, Repository, SaveMemoInput, ShortcutCheckResult } from "./types";
 
 const isTauri = "__TAURI_INTERNALS__" in window;
 export const isDesktopApp = isTauri;
@@ -198,6 +198,23 @@ export async function captureClipboardMemo(repositoryId: string): Promise<Memo> 
 export async function readClipboardText(): Promise<string> {
   if (isTauri) return invoke("read_clipboard_text");
   return navigator.clipboard.readText();
+}
+
+export async function searchMemos(filter: MemoFilter): Promise<Memo[]> {
+  if (isTauri) return invoke("search_memos", { filter });
+  return demoMemos.filter((memo) => {
+    if (memo.deleted) return false;
+    if (filter.repository_id && memo.repository_id !== filter.repository_id) return false;
+    if (filter.pinned !== undefined && filter.pinned !== null && memo.pinned !== filter.pinned) return false;
+    if (filter.archived !== undefined && filter.archived !== null && memo.archived !== filter.archived) return false;
+    if (filter.source && memo.source !== filter.source) return false;
+    if (!filter.tags.every((tag) => memo.tags.includes(tag))) return false;
+    const query = filter.query?.trim().toLowerCase();
+    if (!query) return true;
+    return `${memo.title} ${memo.body_md} ${memo.tags.join(" ")} ${memo.source} ${JSON.stringify(memo.meta)}`
+      .toLowerCase()
+      .includes(query);
+  });
 }
 
 export async function syncNow(serverUrl: string): Promise<{ pushed: number; pulled: number; server_sequence: number }> {

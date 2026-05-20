@@ -55,6 +55,15 @@ export interface SaveMemoInput {
   archived: boolean;
 }
 
+export interface MemoFilter {
+  repository_id?: string | null;
+  query?: string | null;
+  tags: string[];
+  pinned?: boolean | null;
+  archived?: boolean | null;
+  source?: Memo["source"] | null;
+}
+
 export interface AppSettings {
   server_url: string;
   quick_capture_shortcut: string;

@@ -48,6 +48,7 @@ import {
   readClipboardText,
   saveMemo,
   saveQuickMemo,
+  searchMemos,
   showQuickCaptureWindow,
   showSettingsWindow,
   syncNow,
@@ -95,6 +96,7 @@ export function App() {
 function WorkbenchApp() {
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [memos, setMemos] = useState<Memo[]>([]);
+  const [allTags, setAllTags] = useState<string[]>([]);
   const [activeRepo, setActiveRepo] = useState<string | "all">("all");
   const [activeMemoId, setActiveMemoId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -114,6 +116,7 @@ function WorkbenchApp() {
   const [saveText, setSaveText] = useState("Saved");
   const quickRepoRef = useRef("");
   const repositoriesRef = useRef<Repository[]>([]);
+  const searchRequestRef = useRef(0);
   const saveTimerRef = useRef<number | null>(null);
   const pendingSaveRef = useRef<SaveMemoInput | null>(null);
 
@@ -161,9 +164,33 @@ function WorkbenchApp() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isDesktopApp) return;
+    const requestId = searchRequestRef.current + 1;
+    searchRequestRef.current = requestId;
+    const handle = window.setTimeout(() => {
+      void searchMemos({
+        repository_id: activeRepo === "all" ? null : activeRepo,
+        query: query.trim() || null,
+        tags: tagFilter ? [tagFilter] : [],
+        pinned: null,
+        archived: null,
+        source: null,
+      }).then((results) => {
+        if (searchRequestRef.current !== requestId) return;
+        setMemos(results);
+        setActiveMemoId((current) => (current && results.some((memo) => memo.id === current) ? current : results[0]?.id ?? null));
+      }).catch((error) => {
+        if (searchRequestRef.current === requestId) setSyncText(error instanceof Error ? error.message : String(error));
+      });
+    }, 140);
+    return () => window.clearTimeout(handle);
+  }, [activeRepo, query, tagFilter]);
+
   function applyBootstrap(data: Awaited<ReturnType<typeof bootstrap>>, preferredMemoId?: string | null) {
     setRepositories(data.repositories);
     setMemos(data.memos);
+    setAllTags([...new Set(data.memos.flatMap((memo) => memo.tags))].sort());
     setDeviceId(data.device_id);
     setSettings(data.settings);
     setLocalStats(data.local_stats);
@@ -193,7 +220,7 @@ function WorkbenchApp() {
   }, [activeRepo, memos, query, tagFilter]);
 
   const activeMemo = visibleMemos.find((memo) => memo.id === activeMemoId) ?? visibleMemos[0] ?? null;
-  const tags = [...new Set(memos.flatMap((memo) => memo.tags))].sort();
+  const tags = allTags;
   const activeRepository = repositories.find((repo) => repo.id === activeMemo?.repository_id);
   const captureRepoId = activeRepo !== "all" ? activeRepo : quickRepo || repositories[0]?.id || "";
 
@@ -226,6 +253,7 @@ function WorkbenchApp() {
 
   function replaceMemo(saved: Memo) {
     setMemos((items) => [saved, ...items.filter((item) => item.id !== saved.id)]);
+    setAllTags((items) => [...new Set([...items, ...saved.tags])].sort());
     setActiveMemoId(saved.id);
   }
 
@@ -298,6 +326,7 @@ function WorkbenchApp() {
       archived: false,
     });
     setMemos((items) => [saved, ...items]);
+    setAllTags((items) => [...new Set([...items, ...saved.tags])].sort());
     setActiveMemoId(saved.id);
     setMode("edit");
   }
@@ -312,6 +341,7 @@ function WorkbenchApp() {
   async function handleClipboardCapture(repositoryId: string) {
     const saved = await captureClipboardMemo(repositoryId);
     setMemos((items) => [saved, ...items.filter((item) => item.id !== saved.id)]);
+    setAllTags((items) => [...new Set([...items, ...saved.tags])].sort());
     setActiveMemoId(saved.id);
   }
 
@@ -327,6 +357,7 @@ function WorkbenchApp() {
       archived: false,
     });
     setMemos((items) => [saved, ...items]);
+    setAllTags((items) => [...new Set([...items, ...saved.tags])].sort());
     setActiveMemoId(saved.id);
     setQuickText("");
     setQuickOpen(false);

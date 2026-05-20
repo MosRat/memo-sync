@@ -8,7 +8,7 @@ use memo_core::{
 use serde::{Deserialize, Serialize};
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
-    Row, SqlitePool,
+    QueryBuilder, Row, Sqlite, SqlitePool,
 };
 use std::{collections::BTreeSet, path::Path, time::Duration};
 use uuid::Uuid;
@@ -95,11 +95,45 @@ impl LocalStore {
     }
 
     pub async fn memos(&self, filter: MemoFilter) -> anyhow::Result<Vec<Memo>> {
-        let rows = sqlx::query(
-            "SELECT id, repository_id, title, body_md, tags, pinned, archived, deleted, created_at, updated_at, source, meta FROM memos ORDER BY pinned DESC, updated_at DESC",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT id, repository_id, title, body_md, tags, pinned, archived, deleted, created_at, updated_at, source, meta FROM memos WHERE deleted = 0",
+        );
+        if let Some(repository_id) = filter.repository_id {
+            query.push(" AND repository_id = ");
+            query.push_bind(repository_id.to_string());
+        }
+        if let Some(pinned) = filter.pinned {
+            query.push(" AND pinned = ");
+            query.push_bind(pinned);
+        }
+        if let Some(archived) = filter.archived {
+            query.push(" AND archived = ");
+            query.push_bind(archived);
+        }
+        if let Some(source) = &filter.source {
+            query.push(" AND source = ");
+            query.push_bind(source_to_str(source));
+        }
+        if let Some(input) = filter
+            .query
+            .as_ref()
+            .map(|query| query.trim())
+            .filter(|query| !query.is_empty())
+        {
+            let pattern = format!("%{}%", input.to_lowercase());
+            query.push(" AND (lower(title) LIKE ");
+            query.push_bind(pattern.clone());
+            query.push(" OR lower(body_md) LIKE ");
+            query.push_bind(pattern.clone());
+            query.push(" OR lower(tags) LIKE ");
+            query.push_bind(pattern.clone());
+            query.push(" OR lower(meta) LIKE ");
+            query.push_bind(pattern);
+            query.push(")");
+        }
+        query.push(" ORDER BY pinned DESC, updated_at DESC");
+
+        let rows = query.build().fetch_all(&self.pool).await?;
 
         let mut memos = rows
             .into_iter()
@@ -675,6 +709,14 @@ async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     .execute(pool)
     .await?;
     sqlx::query(
+        "CREATE INDEX IF NOT EXISTS memos_repo_deleted_updated_idx ON memos(repository_id, deleted, updated_at)",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS memos_source_updated_idx ON memos(source, updated_at)")
+        .execute(pool)
+        .await?;
+    sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS local_operations (
           op_id TEXT PRIMARY KEY,
@@ -1014,5 +1056,72 @@ mod tests {
                 SyncOperationKind::UpsertMemo(memo) if memo.title == "Third" && memo.body_md == "three"
             )
         }));
+    }
+
+    #[tokio::test]
+    async fn memos_apply_database_filters_before_domain_filtering() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalStore::open(dir.path().join("memo.sqlite"))
+            .await
+            .unwrap();
+        let work = store
+            .create_repository("Work".to_string(), false, "#c86f52".to_string(), "device-a")
+            .await
+            .unwrap();
+        let personal = store
+            .create_repository(
+                "Personal".to_string(),
+                false,
+                "#6f8f83".to_string(),
+                "device-a",
+            )
+            .await
+            .unwrap();
+        store
+            .save_memo(
+                SaveMemoInput {
+                    id: None,
+                    repository_id: work.id,
+                    title: "Latency notes".to_string(),
+                    body_md: "Query SQLite before React".to_string(),
+                    tags: BTreeSet::from(["perf".to_string()]),
+                    pinned: false,
+                    archived: false,
+                },
+                MemoSource::Manual,
+                "device-a",
+            )
+            .await
+            .unwrap();
+        store
+            .save_memo(
+                SaveMemoInput {
+                    id: None,
+                    repository_id: personal.id,
+                    title: "Garden".to_string(),
+                    body_md: "Low latency watering".to_string(),
+                    tags: BTreeSet::from(["home".to_string()]),
+                    pinned: false,
+                    archived: false,
+                },
+                MemoSource::Clipboard,
+                "device-a",
+            )
+            .await
+            .unwrap();
+
+        let results = store
+            .memos(MemoFilter {
+                repository_id: Some(work.id),
+                query: Some("latency".to_string()),
+                tags: BTreeSet::from(["perf".to_string()]),
+                source: Some(MemoSource::Manual),
+                ..MemoFilter::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Latency notes");
     }
 }
