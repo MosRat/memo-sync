@@ -13,6 +13,8 @@ use sqlx::{
 use std::{collections::BTreeSet, path::Path, time::Duration};
 use uuid::Uuid;
 
+const PUSH_BATCH_LIMIT: i64 = 500;
+
 #[derive(Clone)]
 pub struct LocalStore {
     pool: SqlitePool,
@@ -177,15 +179,15 @@ impl LocalStore {
             .timeout(Duration::from_secs(20))
             .pool_idle_timeout(Duration::from_secs(30))
             .build()?;
-        let pending = self.pending_operations().await?;
-        let push_response = if pending.is_empty() {
-            memo_core::PushResponse {
-                protocol_version: SYNC_PROTOCOL_VERSION,
-                accepted: 0,
-                server_sequence: self.last_server_sequence().await?,
+        let mut pushed = 0usize;
+        let mut server_sequence = self.last_server_sequence().await?;
+
+        loop {
+            let pending = self.pending_operations(PUSH_BATCH_LIMIT).await?;
+            if pending.is_empty() {
+                break;
             }
-        } else {
-            client
+            let push_response: memo_core::PushResponse = client
                 .post(format!(
                     "{}/api/v1/sync/push",
                     server_url.trim_end_matches('/')
@@ -200,13 +202,14 @@ impl LocalStore {
                 .await?
                 .error_for_status()?
                 .json()
-                .await?
-        };
-        self.mark_operations_pushed(&pending, push_response.server_sequence)
-            .await?;
+                .await?;
+            pushed += push_response.accepted;
+            server_sequence = server_sequence.max(push_response.server_sequence);
+            self.mark_operations_pushed(&pending, push_response.server_sequence)
+                .await?;
+        }
 
         let mut pulled = 0usize;
-        let mut server_sequence = push_response.server_sequence;
         loop {
             let since_sequence = self.last_server_sequence().await?;
             let pull: PullResponse = client
@@ -240,7 +243,7 @@ impl LocalStore {
         }
 
         Ok(SyncSummary {
-            pushed: pending.len(),
+            pushed,
             pulled,
             server_sequence,
         })
@@ -365,8 +368,9 @@ impl LocalStore {
         Ok(())
     }
 
-    async fn pending_operations(&self) -> anyhow::Result<Vec<SyncOperation>> {
-        let rows = sqlx::query("SELECT payload FROM local_operations WHERE server_sequence IS NULL ORDER BY created_at ASC")
+    async fn pending_operations(&self, limit: i64) -> anyhow::Result<Vec<SyncOperation>> {
+        let rows = sqlx::query("SELECT payload FROM local_operations WHERE server_sequence IS NULL ORDER BY created_at ASC LIMIT ?1")
+            .bind(limit)
             .fetch_all(&self.pool)
             .await?;
         rows.into_iter()
@@ -651,7 +655,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(store.pending_operations().await.unwrap().len(), 0);
+        assert_eq!(store.pending_operations(PUSH_BATCH_LIMIT).await.unwrap().len(), 0);
         assert!(store
             .memos(MemoFilter {
                 repository_id: Some(repo.id),
@@ -707,7 +711,7 @@ mod tests {
             .unwrap();
 
         store.delete_memo(memo.id, "device-a").await.unwrap();
-        let pending = store.pending_operations().await.unwrap();
+        let pending = store.pending_operations(PUSH_BATCH_LIMIT).await.unwrap();
         assert!(pending.iter().any(|op| {
             matches!(
                 &op.kind,

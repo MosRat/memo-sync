@@ -10,9 +10,18 @@ export const APP_EVENTS = {
   openQuickCapture: "open-quick-capture",
   clipboardCaptureRequested: "clipboard-capture-requested",
   memosChanged: "memos-changed",
+  syncCompleted: "sync-completed",
 } as const;
 
 export type MemosChangedPayload = { active_memo_id?: string | null };
+export type SyncCompletedPayload = {
+  ok: boolean;
+  pushed: number;
+  pulled: number;
+  server_sequence: number;
+  message: string;
+  background: boolean;
+};
 
 export function currentWindowLabel() {
   if (!isTauri) return "web";
@@ -30,6 +39,8 @@ const defaultSettings: AppSettings = {
   settings_shortcut: "Ctrl+Shift+KeyS",
   writing_mode: "split",
   compact_sidebar_on_start: false,
+  auto_sync_enabled: true,
+  auto_sync_interval_secs: 60,
 };
 
 const demoRepo: Repository = {
@@ -216,6 +227,10 @@ export function emitMemosChanged(payload: MemosChangedPayload) {
 
 export function listenMemosChanged(handler: (payload: MemosChangedPayload) => void) {
   return listenAppEvent<MemosChangedPayload>(APP_EVENTS.memosChanged, handler);
+}
+
+export function listenSyncCompleted(handler: (payload: SyncCompletedPayload) => void) {
+  return listenAppEvent<SyncCompletedPayload>(APP_EVENTS.syncCompleted, handler);
 }
 
 function getWebSettings(): AppSettings {

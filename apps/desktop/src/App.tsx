@@ -44,6 +44,7 @@ import {
   listenCurrentWindowFocus,
   listenAppEvent,
   listenMemosChanged,
+  listenSyncCompleted,
   readClipboardText,
   saveMemo,
   saveQuickMemo,
@@ -64,6 +65,8 @@ const defaultSettings: AppSettings = {
   settings_shortcut: "Ctrl+Shift+KeyS",
   writing_mode: "split",
   compact_sidebar_on_start: false,
+  auto_sync_enabled: true,
+  auto_sync_interval_secs: 60,
 };
 
 type Mode = "edit" | "preview" | "split";
@@ -129,6 +132,17 @@ function WorkbenchApp() {
     listenMemosChanged(async (payload) => {
       const refreshed = await bootstrap();
       applyBootstrap(refreshed, payload.active_memo_id ?? null);
+    }).then((unsub) => unsubs.push(unsub));
+    listenSyncCompleted((payload) => {
+      if (payload.ok) {
+        setSyncText(
+          payload.background
+            ? `Auto: pushed ${payload.pushed}, pulled ${payload.pulled}`
+            : `Pushed ${payload.pushed}, pulled ${payload.pulled}`,
+        );
+      } else if (payload.background) {
+        setSyncText(`Auto sync: ${payload.message}`);
+      }
     }).then((unsub) => unsubs.push(unsub));
     return () => {
       if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
@@ -996,6 +1010,28 @@ function AppDialog({
                 onChange={(event) => setDraft({ ...draft, compact_sidebar_on_start: event.target.checked })}
               />
               <span>Start with compact sidebar</span>
+            </label>
+            <label className="toggle setting-toggle">
+              <input
+                type="checkbox"
+                checked={draft.auto_sync_enabled}
+                onChange={(event) => setDraft({ ...draft, auto_sync_enabled: event.target.checked })}
+              />
+              <span>Background sync</span>
+            </label>
+            <label>
+              <span>Background sync interval</span>
+              <select
+                value={draft.auto_sync_interval_secs}
+                onChange={(event) => setDraft({ ...draft, auto_sync_interval_secs: Number(event.target.value) })}
+                disabled={!draft.auto_sync_enabled}
+              >
+                <option value={15}>15 seconds</option>
+                <option value={30}>30 seconds</option>
+                <option value={60}>1 minute</option>
+                <option value={300}>5 minutes</option>
+                <option value={900}>15 minutes</option>
+              </select>
             </label>
             <div className="settings-actions">
               <button className="primary" onClick={saveDraft}>

@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 use store::{LocalStore, SaveMemoInput, SyncSummary};
 use tauri::{
@@ -15,7 +16,13 @@ use tauri::{
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
+
+const EVENT_OPEN_QUICK_CAPTURE: &str = "open-quick-capture";
+const EVENT_CLIPBOARD_CAPTURE_REQUESTED: &str = "clipboard-capture-requested";
+const EVENT_MEMOS_CHANGED: &str = "memos-changed";
+const EVENT_SYNC_COMPLETED: &str = "sync-completed";
 
 #[derive(Clone)]
 struct AppState {
@@ -23,6 +30,7 @@ struct AppState {
     device_id: String,
     settings_path: PathBuf,
     settings: Arc<Mutex<AppSettings>>,
+    sync_lock: Arc<AsyncMutex<()>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -58,10 +66,22 @@ struct AppSettings {
     settings_shortcut: String,
     writing_mode: String,
     compact_sidebar_on_start: bool,
+    #[serde(default = "default_auto_sync_enabled")]
+    auto_sync_enabled: bool,
+    #[serde(default = "default_auto_sync_interval_secs")]
+    auto_sync_interval_secs: u64,
 }
 
 fn default_settings_shortcut() -> String {
     "Ctrl+Shift+KeyS".to_string()
+}
+
+fn default_auto_sync_enabled() -> bool {
+    true
+}
+
+fn default_auto_sync_interval_secs() -> u64 {
+    60
 }
 
 impl Default for AppSettings {
@@ -73,8 +93,25 @@ impl Default for AppSettings {
             settings_shortcut: default_settings_shortcut(),
             writing_mode: "split".to_string(),
             compact_sidebar_on_start: false,
+            auto_sync_enabled: default_auto_sync_enabled(),
+            auto_sync_interval_secs: default_auto_sync_interval_secs(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SyncCompletedPayload {
+    ok: bool,
+    pushed: usize,
+    pulled: usize,
+    server_sequence: i64,
+    message: String,
+    background: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct MemosChangedPayload {
+    active_memo_id: Option<String>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -98,12 +135,21 @@ pub fn run() {
             let settings_path = data_dir.join("settings.json");
             let settings = load_settings(&settings_path)?;
             let settings = Arc::new(Mutex::new(settings));
+            let sync_lock = Arc::new(AsyncMutex::new(()));
             app.manage(AppState {
-                store,
-                device_id,
+                store: store.clone(),
+                device_id: device_id.clone(),
                 settings_path,
                 settings: settings.clone(),
+                sync_lock: sync_lock.clone(),
             });
+            spawn_background_sync(
+                app.handle().clone(),
+                store,
+                device_id,
+                settings.clone(),
+                sync_lock,
+            );
             setup_tray(app)?;
             setup_shortcuts(app.handle(), &settings.lock().unwrap())?;
             Ok(())
@@ -255,12 +301,22 @@ async fn search_memos(state: State<'_, AppState>, filter: MemoFilter) -> Result<
 }
 
 #[tauri::command]
-async fn sync_now(state: State<'_, AppState>, server_url: String) -> Result<SyncSummary, String> {
-    state
+async fn sync_now(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    server_url: String,
+) -> Result<SyncSummary, String> {
+    let _guard = state.sync_lock.lock().await;
+    let summary = state
         .store
         .sync_now(&server_url, &state.device_id)
         .await
-        .map_err(to_string)
+        .map_err(to_string)?;
+    emit_sync_completed(&app, &summary, false, None);
+    if summary.pulled > 0 {
+        emit_memos_changed(&app, None);
+    }
+    Ok(summary)
 }
 
 #[tauri::command]
@@ -328,6 +384,95 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         })
         .build(app)?;
     Ok(())
+}
+
+fn spawn_background_sync(
+    app: tauri::AppHandle,
+    store: LocalStore,
+    device_id: String,
+    settings: Arc<Mutex<AppSettings>>,
+    sync_lock: Arc<AsyncMutex<()>>,
+) {
+    tauri::async_runtime::spawn(async move {
+        let mut last_attempt = Instant::now()
+            .checked_sub(Duration::from_secs(3600))
+            .unwrap_or_else(Instant::now);
+        loop {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            let snapshot = match settings.lock() {
+                Ok(settings) => settings.clone(),
+                Err(error) => {
+                    let _ = app.emit(
+                        EVENT_SYNC_COMPLETED,
+                        SyncCompletedPayload {
+                            ok: false,
+                            pushed: 0,
+                            pulled: 0,
+                            server_sequence: 0,
+                            message: error.to_string(),
+                            background: true,
+                        },
+                    );
+                    continue;
+                }
+            };
+            if !snapshot.auto_sync_enabled {
+                continue;
+            }
+            let interval = Duration::from_secs(snapshot.auto_sync_interval_secs.clamp(15, 3600));
+            if last_attempt.elapsed() < interval {
+                continue;
+            }
+            let Ok(_guard) = sync_lock.try_lock() else {
+                continue;
+            };
+            last_attempt = Instant::now();
+            match store.sync_now(&snapshot.server_url, &device_id).await {
+                Ok(summary) => {
+                    emit_sync_completed(&app, &summary, true, None);
+                    if summary.pulled > 0 {
+                        emit_memos_changed(&app, None);
+                    }
+                }
+                Err(error) => {
+                    let _ = app.emit(
+                        EVENT_SYNC_COMPLETED,
+                        SyncCompletedPayload {
+                            ok: false,
+                            pushed: 0,
+                            pulled: 0,
+                            server_sequence: 0,
+                            message: error.to_string(),
+                            background: true,
+                        },
+                    );
+                }
+            }
+        }
+    });
+}
+
+fn emit_sync_completed(
+    app: &tauri::AppHandle,
+    summary: &SyncSummary,
+    background: bool,
+    message: Option<String>,
+) {
+    let _ = app.emit(
+        EVENT_SYNC_COMPLETED,
+        SyncCompletedPayload {
+            ok: true,
+            pushed: summary.pushed,
+            pulled: summary.pulled,
+            server_sequence: summary.server_sequence,
+            message: message.unwrap_or_else(|| "Sync completed".to_string()),
+            background,
+        },
+    );
+}
+
+fn emit_memos_changed(app: &tauri::AppHandle, active_memo_id: Option<String>) {
+    let _ = app.emit(EVENT_MEMOS_CHANGED, MemosChangedPayload { active_memo_id });
 }
 
 fn setup_shortcuts(app: &tauri::AppHandle, settings: &AppSettings) -> anyhow::Result<()> {
@@ -457,7 +602,7 @@ fn spawn_quick_capture(app: tauri::AppHandle, clipboard: bool) {
             return;
         }
         if clipboard {
-            let _ = app.emit("clipboard-capture-requested", ());
+            let _ = app.emit(EVENT_CLIPBOARD_CAPTURE_REQUESTED, ());
         }
     });
 }
@@ -477,7 +622,9 @@ fn reveal_window(app: &tauri::AppHandle, quick_capture: bool) -> Result<(), Stri
     window.show().map_err(to_string)?;
     window.set_focus().map_err(to_string)?;
     if quick_capture {
-        window.emit("open-quick-capture", ()).map_err(to_string)?;
+        window
+            .emit(EVENT_OPEN_QUICK_CAPTURE, ())
+            .map_err(to_string)?;
     }
     Ok(())
 }
@@ -507,7 +654,9 @@ fn reveal_quick_capture(app: &tauri::AppHandle) -> Result<(), String> {
         window.center().map_err(to_string)?;
     }
     window.set_focus().map_err(to_string)?;
-    window.emit("open-quick-capture", ()).map_err(to_string)?;
+    window
+        .emit(EVENT_OPEN_QUICK_CAPTURE, ())
+        .map_err(to_string)?;
     Ok(())
 }
 
@@ -580,9 +729,13 @@ fn validate_settings(settings: &AppSettings) -> Result<(), String> {
     Shortcut::from_str(&settings.clipboard_capture_shortcut).map_err(to_string)?;
     Shortcut::from_str(&settings.settings_shortcut).map_err(to_string)?;
     match settings.writing_mode.as_str() {
-        "split" | "edit" | "preview" => Ok(()),
-        _ => Err("Writing mode must be split, edit, or preview".to_string()),
+        "split" | "edit" | "preview" => {}
+        _ => return Err("Writing mode must be split, edit, or preview".to_string()),
     }
+    if !(15..=3600).contains(&settings.auto_sync_interval_secs) {
+        return Err("Auto sync interval must be between 15 and 3600 seconds".to_string());
+    }
+    Ok(())
 }
 
 fn unique_shortcuts(shortcuts: [&str; 3]) -> Result<(), String> {

@@ -54,6 +54,8 @@ export interface AppSettings {
   settings_shortcut: string;
   writing_mode: "split" | "edit" | "preview";
   compact_sidebar_on_start: boolean;
+  auto_sync_enabled: boolean;
+  auto_sync_interval_secs: number;
 }
 
 export interface ShortcutCheckResult {
