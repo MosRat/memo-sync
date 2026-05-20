@@ -451,11 +451,22 @@ impl LocalStore {
     }
 
     async fn append_local_operation(&self, op: &SyncOperation) -> anyhow::Result<()> {
+        let (entity_kind, entity_id) = operation_entity(op);
         sqlx::query(
-            "INSERT OR IGNORE INTO local_operations (op_id, payload, created_at) VALUES (?1, ?2, ?3)",
+            r#"
+            INSERT INTO local_operations (op_id, payload, entity_kind, entity_id, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            ON CONFLICT(entity_kind, entity_id)
+            WHERE server_sequence IS NULL AND entity_kind IS NOT NULL AND entity_id IS NOT NULL
+            DO UPDATE SET
+              op_id = excluded.op_id,
+              payload = excluded.payload
+            "#,
         )
         .bind(op.op_id.to_string())
         .bind(serde_json::to_string(op)?)
+        .bind(entity_kind)
+        .bind(entity_id.to_string())
         .bind(Utc::now().to_rfc3339())
         .execute(&self.pool)
         .await?;
@@ -557,6 +568,37 @@ async fn scalar_i64(pool: &SqlitePool, sql: &str) -> anyhow::Result<i64> {
     Ok(row.get("value"))
 }
 
+async fn ensure_column(
+    pool: &SqlitePool,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> anyhow::Result<()> {
+    let rows = sqlx::query(&format!("PRAGMA table_info({table})"))
+        .fetch_all(pool)
+        .await?;
+    let exists = rows
+        .iter()
+        .any(|row| row.get::<String, _>("name") == column);
+    if !exists {
+        sqlx::query(&format!(
+            "ALTER TABLE {table} ADD COLUMN {column} {definition}"
+        ))
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
+fn operation_entity(op: &SyncOperation) -> (&'static str, Uuid) {
+    match &op.kind {
+        SyncOperationKind::UpsertRepository(repo) => ("repository", repo.id),
+        SyncOperationKind::UpsertMemo(memo) => ("memo", memo.id),
+        SyncOperationKind::PatchMemo { memo_id, .. }
+        | SyncOperationKind::DeleteMemo { memo_id, .. } => ("memo", *memo_id),
+    }
+}
+
 fn desktop_client_info() -> ClientInfo {
     ClientInfo {
         name: "memo-sync-desktop".to_string(),
@@ -637,6 +679,8 @@ async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
         CREATE TABLE IF NOT EXISTS local_operations (
           op_id TEXT PRIMARY KEY,
           payload TEXT NOT NULL,
+          entity_kind TEXT,
+          entity_id TEXT,
           server_sequence INTEGER,
           created_at TEXT NOT NULL
         );
@@ -644,8 +688,19 @@ async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     )
     .execute(pool)
     .await?;
+    ensure_column(pool, "local_operations", "entity_kind", "TEXT").await?;
+    ensure_column(pool, "local_operations", "entity_id", "TEXT").await?;
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS local_operations_pending_idx ON local_operations(server_sequence, created_at)",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        r#"
+        CREATE UNIQUE INDEX IF NOT EXISTS local_operations_pending_entity_idx
+        ON local_operations(entity_kind, entity_id)
+        WHERE server_sequence IS NULL AND entity_kind IS NOT NULL AND entity_id IS NOT NULL
+        "#,
     )
     .execute(pool)
     .await?;
@@ -884,5 +939,80 @@ mod tests {
         assert!(stats.repository_count >= 3);
         assert_eq!(stats.pending_operations, 2);
         assert_eq!(stats.last_server_sequence, 0);
+    }
+
+    #[tokio::test]
+    async fn pending_operations_are_compacted_by_entity() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalStore::open(dir.path().join("memo.sqlite"))
+            .await
+            .unwrap();
+        let repo = store
+            .create_repository(
+                "Drafts".to_string(),
+                false,
+                "#c86f52".to_string(),
+                "device-a",
+            )
+            .await
+            .unwrap();
+        let memo = store
+            .save_memo(
+                SaveMemoInput {
+                    id: None,
+                    repository_id: repo.id,
+                    title: "First".to_string(),
+                    body_md: "one".to_string(),
+                    tags: BTreeSet::new(),
+                    pinned: false,
+                    archived: false,
+                },
+                MemoSource::Manual,
+                "device-a",
+            )
+            .await
+            .unwrap();
+
+        store
+            .save_memo(
+                SaveMemoInput {
+                    id: Some(memo.id),
+                    repository_id: repo.id,
+                    title: "Second".to_string(),
+                    body_md: "two".to_string(),
+                    tags: BTreeSet::new(),
+                    pinned: false,
+                    archived: false,
+                },
+                MemoSource::Manual,
+                "device-a",
+            )
+            .await
+            .unwrap();
+        store
+            .save_memo(
+                SaveMemoInput {
+                    id: Some(memo.id),
+                    repository_id: repo.id,
+                    title: "Third".to_string(),
+                    body_md: "three".to_string(),
+                    tags: BTreeSet::new(),
+                    pinned: false,
+                    archived: false,
+                },
+                MemoSource::Manual,
+                "device-a",
+            )
+            .await
+            .unwrap();
+
+        let pending = store.pending_operations(PUSH_BATCH_LIMIT).await.unwrap();
+        assert_eq!(pending.len(), 2);
+        assert!(pending.iter().any(|op| {
+            matches!(
+                &op.kind,
+                SyncOperationKind::UpsertMemo(memo) if memo.title == "Third" && memo.body_md == "three"
+            )
+        }));
     }
 }
