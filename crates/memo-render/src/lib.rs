@@ -10,7 +10,7 @@ use typst::foundations::{Dict, IntoValue};
 use typst::layout::{Abs, PagedDocument};
 use typst_as_lib::{typst_kit_options::TypstKitFontOptions, TypstEngine, TypstTemplateMainFile};
 
-const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v9";
+const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v10";
 const RENDER_MAIN_TEMPLATE: &str = r#"#import sys: inputs
 #eval(inputs.source, mode: "markup")
 "#;
@@ -288,93 +288,161 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
     let prelude = match template {
         RenderTemplate::Literary => {
             r##"
-#set page(width: 320pt, height: auto, margin: (x: 14pt, y: 10pt), fill: none)
-#set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Inter", "Microsoft YaHei", "New Computer Modern"), size: 14.5pt, lang: "zh", fill: rgb("#211f1b"))
-#set par(leading: 0.66em, justify: false, spacing: 0.34em)
+#set page(width: 320pt, height: auto, margin: (x: 14pt, y: 9pt), fill: none)
+#set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Inter", "Microsoft YaHei", "New Computer Modern"), size: 14.25pt, lang: "zh", fill: rgb("#211f1b"))
+#set par(leading: 0.62em, justify: false, spacing: 0.3em)
 #set math.equation(numbering: none)
-#show heading: it => block(above: 0.18em, below: 0.18em, text(weight: 730, fill: rgb("#171512"), it))
-#show raw: it => block(
+#set list(indent: 1.08em, body-indent: 0.42em)
+#set enum(indent: 1.2em, body-indent: 0.48em)
+#show heading.where(level: 1): it => block(above: 0.04em, below: 0.18em, text(size: 1.28em, weight: 760, fill: rgb("#171512"), it))
+#show heading.where(level: 2): it => block(above: 0.22em, below: 0.14em, text(size: 1.08em, weight: 730, fill: rgb("#2c2520"), it))
+#show heading: it => block(above: 0.16em, below: 0.12em, text(weight: 720, fill: rgb("#352d27"), it))
+#show strong: it => text(weight: 760, fill: rgb("#171512"), it)
+#show emph: it => text(style: "italic", fill: rgb("#735742"), it)
+#show link: it => text(fill: rgb("#7b563d"), underline(it))
+#show quote: it => block(stroke: (left: 1.6pt + rgb("#c9ad8a")), inset: (left: 7pt), above: 0.22em, below: 0.16em, text(fill: rgb("#5f5147"), it))
+#show raw.where(block: false): it => box(
+  fill: rgb("#eee7da"),
+  radius: 2.4pt,
+  inset: (x: 2.8pt, y: 1.1pt),
+  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 0.86em, fill: rgb("#6b3f31"), it)
+)
+#show raw.where(block: true): it => block(
   fill: rgb("#1f261f"),
   radius: 4pt,
-  inset: 7pt,
-  above: 0.34em,
-  below: 0.24em,
+  inset: 6.8pt,
+  above: 0.28em,
+  below: 0.18em,
   width: 100%,
-  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.6pt, fill: rgb("#eaf1e4"), it)
+  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.25pt, fill: rgb("#eaf1e4"), it)
 )
 "##
         }
         RenderTemplate::Compact => {
             r##"
-#set page(width: 304pt, height: auto, margin: (x: 12pt, y: 9pt), fill: none)
-#set text(font: ("Inter", "Noto Sans CJK SC", "Microsoft YaHei", "New Computer Modern"), size: 13pt, lang: "zh", fill: rgb("#27231f"))
-#set par(leading: 0.5em, justify: false, spacing: 0.2em)
+#set page(width: 304pt, height: auto, margin: (x: 11pt, y: 8pt), fill: none)
+#set text(font: ("Inter", "Noto Sans CJK SC", "Microsoft YaHei", "New Computer Modern"), size: 12.75pt, lang: "zh", fill: rgb("#27231f"))
+#set par(leading: 0.46em, justify: false, spacing: 0.16em)
 #set math.equation(numbering: none)
-#show heading: it => block(above: 0.14em, below: 0.12em, text(weight: 720, fill: rgb("#24211d"), it))
-#show raw: it => block(
+#set list(indent: 1em, body-indent: 0.34em)
+#set enum(indent: 1.1em, body-indent: 0.42em)
+#show heading.where(level: 1): it => block(above: 0.02em, below: 0.12em, text(size: 1.16em, weight: 760, fill: rgb("#211e1a"), it))
+#show heading.where(level: 2): it => block(above: 0.16em, below: 0.08em, text(size: 1.02em, weight: 730, fill: rgb("#2e2a25"), it))
+#show heading: it => block(above: 0.12em, below: 0.08em, text(weight: 710, fill: rgb("#36312b"), it))
+#show strong: it => text(weight: 760, fill: rgb("#1d1b18"), it)
+#show emph: it => text(style: "italic", fill: rgb("#665a4d"), it)
+#show link: it => text(fill: rgb("#596f62"), underline(it))
+#show quote: it => block(stroke: (left: 1.4pt + rgb("#b9b0a1")), inset: (left: 6pt), above: 0.16em, below: 0.12em, text(fill: rgb("#5d574f"), it))
+#show raw.where(block: false): it => box(
+  fill: rgb("#ece8df"),
+  radius: 2pt,
+  inset: (x: 2.6pt, y: 0.8pt),
+  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 0.84em, fill: rgb("#5b4338"), it)
+)
+#show raw.where(block: true): it => block(
   fill: rgb("#20261f"),
   radius: 4pt,
-  inset: 6.5pt,
-  above: 0.28em,
-  below: 0.18em,
+  inset: 6pt,
+  above: 0.22em,
+  below: 0.14em,
   width: 100%,
-  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.1pt, fill: rgb("#eaf1e4"), it)
+  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 8.75pt, fill: rgb("#eaf1e4"), it)
 )
 "##
         }
         RenderTemplate::Technical => {
             r##"
 #set page(width: 328pt, height: auto, margin: (x: 13pt, y: 10pt), fill: none)
-#set text(font: ("Inter", "Noto Sans CJK SC", "Microsoft YaHei", "New Computer Modern"), size: 13.5pt, lang: "zh", fill: rgb("#20231f"))
-#set par(leading: 0.52em, justify: false, spacing: 0.22em)
+#set text(font: ("Inter", "Noto Sans CJK SC", "Microsoft YaHei", "New Computer Modern"), size: 13.25pt, lang: "zh", fill: rgb("#20231f"))
+#set par(leading: 0.48em, justify: false, spacing: 0.18em)
 #set math.equation(numbering: none)
-#show heading: it => block(above: 0.16em, below: 0.14em, text(weight: 740, fill: rgb("#1e2520"), it))
-#show raw: it => block(
+#set list(indent: 1.05em, body-indent: 0.38em)
+#set enum(indent: 1.16em, body-indent: 0.44em)
+#show heading.where(level: 1): it => block(above: 0.02em, below: 0.13em, text(size: 1.18em, weight: 780, fill: rgb("#162019"), it))
+#show heading.where(level: 2): it => block(above: 0.18em, below: 0.1em, text(size: 1.03em, weight: 760, fill: rgb("#1e2b23"), it))
+#show heading: it => block(above: 0.12em, below: 0.08em, text(weight: 730, fill: rgb("#24332b"), it))
+#show strong: it => text(weight: 780, fill: rgb("#18221b"), it)
+#show emph: it => text(style: "italic", fill: rgb("#526553"), it)
+#show link: it => text(fill: rgb("#2f7462"), underline(it))
+#show quote: it => block(fill: rgb("#edf1ec"), stroke: (left: 1.6pt + rgb("#819b88")), inset: (x: 7pt, y: 3pt), radius: 3pt, above: 0.18em, below: 0.12em, text(fill: rgb("#4a5c4f"), it))
+#show raw.where(block: false): it => box(
+  fill: rgb("#e9eee9"),
+  radius: 2pt,
+  inset: (x: 2.6pt, y: 0.9pt),
+  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 0.84em, fill: rgb("#235341"), it)
+)
+#show raw.where(block: true): it => block(
   fill: rgb("#151d19"),
   radius: 4pt,
-  inset: 7pt,
-  above: 0.3em,
-  below: 0.2em,
+  inset: 6.6pt,
+  above: 0.24em,
+  below: 0.16em,
   width: 100%,
-  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.5pt, fill: rgb("#dfece2"), it)
+  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.1pt, fill: rgb("#dfece2"), it)
 )
 "##
         }
         RenderTemplate::Magazine => {
             r##"
 #set page(width: 334pt, height: auto, margin: (x: 15pt, y: 11pt), fill: none)
-#set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Inter", "Georgia", "New Computer Modern"), size: 15.2pt, lang: "zh", fill: rgb("#201b16"))
-#set par(leading: 0.7em, justify: false, spacing: 0.34em)
+#set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Inter", "Georgia", "New Computer Modern"), size: 14.9pt, lang: "zh", fill: rgb("#201b16"))
+#set par(leading: 0.64em, justify: false, spacing: 0.3em)
 #set math.equation(numbering: none)
-#show heading: it => block(above: 0.16em, below: 0.18em, text(weight: 760, fill: rgb("#15120f"), it))
+#set list(indent: 1.1em, body-indent: 0.44em)
+#set enum(indent: 1.22em, body-indent: 0.5em)
+#show heading.where(level: 1): it => block(above: 0em, below: 0.16em, text(size: 1.32em, weight: 780, fill: rgb("#15120f"), it))
+#show heading.where(level: 2): it => block(above: 0.24em, below: 0.12em, text(size: 1.08em, weight: 740, fill: rgb("#2b2119"), it))
+#show heading: it => block(above: 0.16em, below: 0.1em, text(weight: 730, fill: rgb("#3a2b20"), it))
+#show strong: it => text(weight: 780, fill: rgb("#18120e"), it)
 #show emph: it => text(style: "italic", fill: rgb("#755b45"), it)
-#show raw: it => block(
+#show link: it => text(fill: rgb("#9a5a3d"), underline(it))
+#show quote: it => block(fill: rgb("#f2ebe0"), stroke: (left: 1.8pt + rgb("#d0825f")), inset: (x: 7pt, y: 3pt), radius: 3pt, above: 0.22em, below: 0.16em, text(fill: rgb("#654a39"), it))
+#show raw.where(block: false): it => box(
+  fill: rgb("#efe6d9"),
+  radius: 2.4pt,
+  inset: (x: 2.8pt, y: 1pt),
+  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 0.84em, fill: rgb("#794433"), it)
+)
+#show raw.where(block: true): it => block(
   fill: rgb("#211d19"),
   radius: 5pt,
-  inset: 7.5pt,
-  above: 0.34em,
-  below: 0.24em,
+  inset: 7pt,
+  above: 0.28em,
+  below: 0.18em,
   width: 100%,
-  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.4pt, fill: rgb("#f6efe4"), it)
+  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9pt, fill: rgb("#f6efe4"), it)
 )
 "##
         }
         RenderTemplate::Notebook => {
             r##"
-#set page(width: 318pt, height: auto, margin: (x: 13pt, y: 9pt), fill: none)
-#set text(font: ("LXGW WenKai", "Inter", "Noto Sans CJK SC", "Microsoft YaHei", "New Computer Modern"), size: 13.4pt, lang: "zh", fill: rgb("#282521"))
-#set par(leading: 0.54em, justify: false, spacing: 0.22em)
+#set page(width: 318pt, height: auto, margin: (x: 13pt, y: 8pt), fill: none)
+#set text(font: ("LXGW WenKai", "Inter", "Noto Sans CJK SC", "Microsoft YaHei", "New Computer Modern"), size: 13.15pt, lang: "zh", fill: rgb("#282521"))
+#set par(leading: 0.5em, justify: false, spacing: 0.18em)
 #set math.equation(numbering: none)
-#show heading: it => block(above: 0.16em, below: 0.14em, text(weight: 730, fill: rgb("#22201d"), it))
-#show quote: it => block(stroke: (left: 2pt + rgb("#c86f52")), inset: (left: 8pt), above: 0.28em, below: 0.2em, text(fill: rgb("#675a50"), it))
-#show raw: it => block(
+#set list(indent: 1.08em, body-indent: 0.4em)
+#set enum(indent: 1.16em, body-indent: 0.46em)
+#show heading.where(level: 1): it => block(above: 0.02em, below: 0.12em, text(size: 1.2em, weight: 760, fill: rgb("#22201d"), it))
+#show heading.where(level: 2): it => block(above: 0.18em, below: 0.1em, text(size: 1.04em, weight: 730, fill: rgb("#2d2924"), it))
+#show heading: it => block(above: 0.12em, below: 0.08em, text(weight: 720, fill: rgb("#37322b"), it))
+#show strong: it => text(weight: 760, fill: rgb("#201d19"), it)
+#show emph: it => text(style: "italic", fill: rgb("#7b5948"), it)
+#show link: it => text(fill: rgb("#6b7457"), underline(it))
+#show quote: it => block(fill: rgb("#f1eee5"), stroke: (left: 1.7pt + rgb("#c86f52")), inset: (x: 7pt, y: 3pt), radius: 3pt, above: 0.2em, below: 0.14em, text(fill: rgb("#675a50"), it))
+#show raw.where(block: false): it => box(
+  fill: rgb("#ebe6d9"),
+  radius: 2pt,
+  inset: (x: 2.6pt, y: 0.9pt),
+  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 0.84em, fill: rgb("#684135"), it)
+)
+#show raw.where(block: true): it => block(
   fill: rgb("#1d2722"),
   radius: 4pt,
-  inset: 6.5pt,
-  above: 0.28em,
-  below: 0.18em,
+  inset: 6pt,
+  above: 0.22em,
+  below: 0.14em,
   width: 100%,
-  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 8.9pt, fill: rgb("#e9f2ea"), it)
+  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 8.6pt, fill: rgb("#e9f2ea"), it)
 )
 "##
         }
@@ -448,8 +516,15 @@ fn markdown_to_typst(markdown: &str) -> (String, Vec<String>) {
             continue;
         }
 
+        if let Some(item) = ordered_markdown_item(trimmed) {
+            out.push_str("+ ");
+            out.push_str(&inline_markdown_to_typst(item));
+            out.push('\n');
+            continue;
+        }
+
         if let Some(quote) = trimmed.strip_prefix("> ") {
-            out.push_str("#block(inset: (left: 8pt), stroke: (left: 1pt + rgb(\"#d5cab8\")))[");
+            out.push_str("#quote(block: true)[");
             out.push_str(&inline_markdown_to_typst(quote));
             out.push_str("]\n\n");
             continue;
@@ -479,16 +554,43 @@ fn markdown_heading(line: &str) -> Option<(usize, &str)> {
     Some((level, rest))
 }
 
+fn ordered_markdown_item(line: &str) -> Option<&str> {
+    let number_len = line.chars().take_while(|ch| ch.is_ascii_digit()).count();
+    if number_len == 0 {
+        return None;
+    }
+    let rest = &line[number_len..];
+    rest.strip_prefix(". ").or_else(|| rest.strip_prefix(") "))
+}
+
 fn inline_markdown_to_typst(text: &str) -> String {
     let mut out = String::new();
     let mut rest = text;
     while !rest.is_empty() {
+        if let Some((label, url, after_link)) = markdown_link(rest) {
+            out.push_str("#link(\"");
+            out.push_str(&escape_typst_string(url.trim()));
+            out.push_str("\")[");
+            out.push_str(&inline_markdown_to_typst(label));
+            out.push(']');
+            rest = after_link;
+            continue;
+        }
         if let Some(after) = rest.strip_prefix('`') {
             if let Some(end) = after.find('`') {
                 out.push_str("#raw(\"");
                 out.push_str(&escape_typst_string(&after[..end]));
                 out.push_str("\")");
                 rest = &after[end + 1..];
+                continue;
+            }
+        }
+        if let Some(after) = rest.strip_prefix("~~") {
+            if let Some(end) = after.find("~~") {
+                out.push_str("#strike[");
+                out.push_str(&escape_typst_text(&after[..end]));
+                out.push(']');
+                rest = &after[end + 2..];
                 continue;
             }
         }
@@ -527,6 +629,18 @@ fn inline_markdown_to_typst(text: &str) -> String {
         rest = &rest[ch.len_utf8()..];
     }
     out
+}
+
+fn markdown_link(input: &str) -> Option<(&str, &str, &str)> {
+    let after_open = input.strip_prefix('[')?;
+    let label_end = after_open.find("](")?;
+    let url_start = label_end + 2;
+    let url_end = after_open[url_start..].find(')')? + url_start;
+    Some((
+        &after_open[..label_end],
+        &after_open[url_start..url_end],
+        &after_open[url_end + 1..],
+    ))
 }
 
 fn latex_math_to_typst(math: &str) -> String {
@@ -730,6 +844,20 @@ mod tests {
     }
 
     #[test]
+    fn markdown_converter_keeps_links_quotes_and_ordered_lists() {
+        let (typst, diagnostics) = markdown_to_typst(
+            "> Quote with [link](https://example.com) and ~~old~~ text.\n\n1. first\n2) second",
+        );
+
+        assert!(typst.contains("#quote(block: true)["));
+        assert!(typst.contains("#link(\"https://example.com\")[link]"));
+        assert!(typst.contains("#strike[old]"));
+        assert!(typst.contains("+ first"));
+        assert!(typst.contains("+ second"));
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
     fn markdown_inline_semantics_render_with_typst() {
         let output = render_memo(RenderMemoInput {
             body: "Use **Markdown**, *italic*, and $ \\frac{1}{2} + \\sin{2} $.".to_string(),
@@ -740,6 +868,20 @@ mod tests {
 
         assert!(svg_has_text_geometry(&output.svg));
         assert!(output.svg.matches("<use").count() > 15);
+    }
+
+    #[test]
+    fn markdown_rich_semantics_render_with_typst() {
+        let output = render_memo(RenderMemoInput {
+            body: "# Heading\n\n> Quote with [link](https://example.com).\n\n1. First\n2. Second\n\nInline `code` and ~~old~~ text."
+                .to_string(),
+            format: RenderFormat::Markdown,
+            template: RenderTemplate::Technical,
+        })
+        .unwrap();
+
+        assert!(svg_has_text_geometry(&output.svg));
+        assert!(output.svg.matches("<use").count() > 20);
     }
 
     #[test]
