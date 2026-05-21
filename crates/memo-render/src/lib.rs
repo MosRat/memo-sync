@@ -11,7 +11,7 @@ use typst::foundations::{Dict, IntoValue};
 use typst::layout::{Abs, PagedDocument};
 use typst_as_lib::{typst_kit_options::TypstKitFontOptions, TypstEngine, TypstTemplateMainFile};
 
-const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v15";
+const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v16";
 const RENDER_MAIN_TEMPLATE: &str = r#"#import sys: inputs
 #eval(inputs.source, mode: "markup")
 "#;
@@ -295,9 +295,9 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
 #set math.equation(numbering: none)
 #set list(indent: 1.08em, body-indent: 0.42em)
 #set enum(indent: 1.2em, body-indent: 0.48em)
-#show heading.where(level: 1): it => block(above: 0.08em, below: 0.28em, text(size: 1.18em, weight: 760, fill: rgb("#171512"), it))
-#show heading.where(level: 2): it => block(above: 0.24em, below: 0.2em, text(size: 1.02em, weight: 730, fill: rgb("#2c2520"), it))
-#show heading: it => block(above: 0.2em, below: 0.16em, text(size: 0.96em, weight: 720, fill: rgb("#352d27"), it))
+#show heading.where(level: 1): it => block(above: 0.08em, below: 0.08em, text(size: 1.16em, weight: 760, fill: rgb("#171512"), it))
+#show heading.where(level: 2): it => block(above: 0.26em, below: 0.06em, text(size: 1.03em, weight: 730, fill: rgb("#2c2520"), it))
+#show heading: it => block(above: 0.22em, below: 0.04em, text(size: 0.97em, weight: 720, fill: rgb("#352d27"), it))
 #show strong: it => text(weight: 760, fill: rgb("#171512"), it)
 #show emph: it => text(style: "italic", fill: rgb("#735742"), it)
 #show link: it => text(fill: rgb("#7b563d"), underline(it))
@@ -327,9 +327,9 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
 #set math.equation(numbering: none)
 #set list(indent: 1em, body-indent: 0.34em)
 #set enum(indent: 1.1em, body-indent: 0.42em)
-#show heading.where(level: 1): it => block(above: 0.04em, below: 0.2em, text(size: 1.12em, weight: 760, fill: rgb("#211e1a"), it))
-#show heading.where(level: 2): it => block(above: 0.18em, below: 0.14em, text(size: 1em, weight: 730, fill: rgb("#2e2a25"), it))
-#show heading: it => block(above: 0.14em, below: 0.12em, text(size: 0.95em, weight: 710, fill: rgb("#36312b"), it))
+#show heading.where(level: 1): it => block(above: 0.04em, below: 0.06em, text(size: 1.1em, weight: 760, fill: rgb("#211e1a"), it))
+#show heading.where(level: 2): it => block(above: 0.2em, below: 0.04em, text(size: 1em, weight: 730, fill: rgb("#2e2a25"), it))
+#show heading: it => block(above: 0.16em, below: 0.04em, text(size: 0.95em, weight: 710, fill: rgb("#36312b"), it))
 #show strong: it => text(weight: 760, fill: rgb("#1d1b18"), it)
 #show emph: it => text(style: "italic", fill: rgb("#665a4d"), it)
 #show link: it => text(fill: rgb("#596f62"), underline(it))
@@ -359,9 +359,9 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
 #set math.equation(numbering: none)
 #set list(indent: 1.05em, body-indent: 0.38em)
 #set enum(indent: 1.16em, body-indent: 0.44em)
-#show heading.where(level: 1): it => block(above: 0.04em, below: 0.22em, text(size: 1.12em, weight: 780, fill: rgb("#162019"), it))
-#show heading.where(level: 2): it => block(above: 0.2em, below: 0.14em, text(size: 1em, weight: 760, fill: rgb("#1e2b23"), it))
-#show heading: it => block(above: 0.14em, below: 0.12em, text(size: 0.95em, weight: 730, fill: rgb("#24332b"), it))
+#show heading.where(level: 1): it => block(above: 0.04em, below: 0.06em, text(size: 1.1em, weight: 780, fill: rgb("#162019"), it))
+#show heading.where(level: 2): it => block(above: 0.22em, below: 0.04em, text(size: 1em, weight: 760, fill: rgb("#1e2b23"), it))
+#show heading: it => block(above: 0.16em, below: 0.04em, text(size: 0.95em, weight: 730, fill: rgb("#24332b"), it))
 #show strong: it => text(weight: 780, fill: rgb("#18221b"), it)
 #show emph: it => text(style: "italic", fill: rgb("#526553"), it)
 #show link: it => text(fill: rgb("#2f7462"), underline(it))
@@ -391,9 +391,9 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
 #set math.equation(numbering: none)
 #set list(indent: 1.1em, body-indent: 0.44em)
 #set enum(indent: 1.22em, body-indent: 0.5em)
-#show heading.where(level: 1): it => block(above: 0.04em, below: 0.26em, text(size: 1.22em, weight: 780, fill: rgb("#15120f"), it))
-#show heading.where(level: 2): it => block(above: 0.24em, below: 0.18em, text(size: 1.04em, weight: 740, fill: rgb("#2b2119"), it))
-#show heading: it => block(above: 0.18em, below: 0.14em, text(size: 0.96em, weight: 730, fill: rgb("#3a2b20"), it))
+#show heading.where(level: 1): it => block(above: 0.04em, below: 0.08em, text(size: 1.2em, weight: 780, fill: rgb("#15120f"), it))
+#show heading.where(level: 2): it => block(above: 0.26em, below: 0.06em, text(size: 1.04em, weight: 740, fill: rgb("#2b2119"), it))
+#show heading: it => block(above: 0.2em, below: 0.04em, text(size: 0.96em, weight: 730, fill: rgb("#3a2b20"), it))
 #show strong: it => text(weight: 780, fill: rgb("#18120e"), it)
 #show emph: it => text(style: "italic", fill: rgb("#755b45"), it)
 #show link: it => text(fill: rgb("#9a5a3d"), underline(it))
@@ -423,9 +423,9 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
 #set math.equation(numbering: none)
 #set list(indent: 1.08em, body-indent: 0.4em)
 #set enum(indent: 1.16em, body-indent: 0.46em)
-#show heading.where(level: 1): it => block(above: 0.04em, below: 0.22em, text(size: 1.14em, weight: 760, fill: rgb("#22201d"), it))
-#show heading.where(level: 2): it => block(above: 0.2em, below: 0.14em, text(size: 1em, weight: 730, fill: rgb("#2d2924"), it))
-#show heading: it => block(above: 0.14em, below: 0.12em, text(size: 0.96em, weight: 720, fill: rgb("#37322b"), it))
+#show heading.where(level: 1): it => block(above: 0.04em, below: 0.06em, text(size: 1.12em, weight: 760, fill: rgb("#22201d"), it))
+#show heading.where(level: 2): it => block(above: 0.22em, below: 0.04em, text(size: 1em, weight: 730, fill: rgb("#2d2924"), it))
+#show heading: it => block(above: 0.16em, below: 0.04em, text(size: 0.96em, weight: 720, fill: rgb("#37322b"), it))
 #show strong: it => text(weight: 760, fill: rgb("#201d19"), it)
 #show emph: it => text(style: "italic", fill: rgb("#7b5948"), it)
 #show link: it => text(fill: rgb("#6b7457"), underline(it))
@@ -554,7 +554,11 @@ fn markdown_to_typst(markdown: &str) -> (String, Vec<String>) {
                         out.push_str("\n\n");
                     }
                 }
-                TagEnd::Heading(_) => out.push_str("\n\n"),
+                TagEnd::Heading(level) => {
+                    out.push('\n');
+                    out.push_str(heading_after_spacing(level));
+                    out.push('\n');
+                }
                 TagEnd::BlockQuote(_) => out.push_str("]\n\n"),
                 TagEnd::CodeBlock => {
                     code_block = false;
@@ -710,6 +714,16 @@ fn heading_level_number(level: HeadingLevel) -> usize {
         HeadingLevel::H4 => 4,
         HeadingLevel::H5 => 5,
         HeadingLevel::H6 => 6,
+    }
+}
+
+fn heading_after_spacing(level: HeadingLevel) -> &'static str {
+    match level {
+        HeadingLevel::H1 => "#v(0.92em)",
+        HeadingLevel::H2 => "#v(0.78em)",
+        HeadingLevel::H3 => "#v(0.66em)",
+        HeadingLevel::H4 => "#v(0.54em)",
+        HeadingLevel::H5 | HeadingLevel::H6 => "#v(0.48em)",
     }
 }
 
@@ -908,6 +922,9 @@ mod tests {
         assert!(typst.contains("= 一、测试"));
         assert!(typst.contains("== 1.测试"));
         assert!(typst.contains("=== 测试"));
+        assert!(typst.contains("= 一、测试\n#v(0.92em)"));
+        assert!(typst.contains("== 1.测试\n#v(0.78em)"));
+        assert!(typst.contains("=== 测试\n#v(0.66em)"));
         assert!(typst.contains("#line(length: 100%"));
         assert!(typst.contains("#v(0.22em)\n```rust"));
         assert!(typst.contains("println!(\"Hello World!\");"));
