@@ -9,11 +9,9 @@ use std::{
 };
 use typst::foundations::{Dict, IntoValue};
 use typst::layout::{Abs, PagedDocument};
-use typst::Document;
 use typst_as_lib::{typst_kit_options::TypstKitFontOptions, TypstEngine, TypstTemplateMainFile};
 
-const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v11";
-const SVG_HTML_FRAME_TEXT_SIZE: f64 = 12.0;
+const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v12";
 const RENDER_MAIN_TEMPLATE: &str = r#"#import sys: inputs
 #eval(inputs.source, mode: "markup")
 "#;
@@ -137,13 +135,7 @@ pub fn render_memo(input: RenderMemoInput) -> anyhow::Result<RenderMemoOutput> {
         .iter()
         .enumerate()
         .map(|(index, page)| {
-            let svg = typst_svg::svg_html_frame(
-                &page.frame,
-                Abs::pt(SVG_HTML_FRAME_TEXT_SIZE),
-                Some(&format!("memo-preview-page-{index}")),
-                &[],
-                document.introspector(),
-            );
+            let svg = typst_svg::svg(page);
             RenderPageOutput {
                 index,
                 width_pt: page.frame.width().to_pt(),
@@ -298,14 +290,14 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
         RenderTemplate::Literary => {
             r##"
 #set page(width: 320pt, height: auto, margin: (x: 14pt, y: 9pt), fill: none)
-#set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Inter", "Microsoft YaHei", "New Computer Modern"), size: 14.25pt, lang: "zh", fill: rgb("#211f1b"))
-#set par(leading: 0.62em, justify: false, spacing: 0.3em)
+#set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Inter", "Microsoft YaHei", "New Computer Modern"), size: 13.2pt, lang: "zh", fill: rgb("#211f1b"))
+#set par(leading: 0.7em, justify: false, spacing: 0.42em)
 #set math.equation(numbering: none)
 #set list(indent: 1.08em, body-indent: 0.42em)
 #set enum(indent: 1.2em, body-indent: 0.48em)
-#show heading.where(level: 1): it => block(above: 0.04em, below: 0.18em, text(size: 1.28em, weight: 760, fill: rgb("#171512"), it))
-#show heading.where(level: 2): it => block(above: 0.22em, below: 0.14em, text(size: 1.08em, weight: 730, fill: rgb("#2c2520"), it))
-#show heading: it => block(above: 0.16em, below: 0.12em, text(weight: 720, fill: rgb("#352d27"), it))
+#show heading.where(level: 1): it => block(above: 0.08em, below: 0.28em, text(size: 1.18em, weight: 760, fill: rgb("#171512"), it))
+#show heading.where(level: 2): it => block(above: 0.24em, below: 0.2em, text(size: 1.02em, weight: 730, fill: rgb("#2c2520"), it))
+#show heading: it => block(above: 0.2em, below: 0.16em, text(size: 0.96em, weight: 720, fill: rgb("#352d27"), it))
 #show strong: it => text(weight: 760, fill: rgb("#171512"), it)
 #show emph: it => text(style: "italic", fill: rgb("#735742"), it)
 #show link: it => text(fill: rgb("#7b563d"), underline(it))
@@ -320,24 +312,24 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
   fill: rgb("#1f261f"),
   radius: 4pt,
   inset: 6.8pt,
-  above: 0.28em,
-  below: 0.18em,
+  above: 0.34em,
+  below: 0.26em,
   width: 100%,
-  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.25pt, fill: rgb("#eaf1e4"), it)
+  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 8.9pt, fill: rgb("#eaf1e4"), it)
 )
 "##
         }
         RenderTemplate::Compact => {
             r##"
 #set page(width: 304pt, height: auto, margin: (x: 11pt, y: 8pt), fill: none)
-#set text(font: ("Inter", "Noto Sans CJK SC", "Microsoft YaHei", "New Computer Modern"), size: 12.75pt, lang: "zh", fill: rgb("#27231f"))
-#set par(leading: 0.46em, justify: false, spacing: 0.16em)
+#set text(font: ("Inter", "Noto Sans CJK SC", "Microsoft YaHei", "New Computer Modern"), size: 12.2pt, lang: "zh", fill: rgb("#27231f"))
+#set par(leading: 0.6em, justify: false, spacing: 0.28em)
 #set math.equation(numbering: none)
 #set list(indent: 1em, body-indent: 0.34em)
 #set enum(indent: 1.1em, body-indent: 0.42em)
-#show heading.where(level: 1): it => block(above: 0.02em, below: 0.12em, text(size: 1.16em, weight: 760, fill: rgb("#211e1a"), it))
-#show heading.where(level: 2): it => block(above: 0.16em, below: 0.08em, text(size: 1.02em, weight: 730, fill: rgb("#2e2a25"), it))
-#show heading: it => block(above: 0.12em, below: 0.08em, text(weight: 710, fill: rgb("#36312b"), it))
+#show heading.where(level: 1): it => block(above: 0.04em, below: 0.2em, text(size: 1.12em, weight: 760, fill: rgb("#211e1a"), it))
+#show heading.where(level: 2): it => block(above: 0.18em, below: 0.14em, text(size: 1em, weight: 730, fill: rgb("#2e2a25"), it))
+#show heading: it => block(above: 0.14em, below: 0.12em, text(size: 0.95em, weight: 710, fill: rgb("#36312b"), it))
 #show strong: it => text(weight: 760, fill: rgb("#1d1b18"), it)
 #show emph: it => text(style: "italic", fill: rgb("#665a4d"), it)
 #show link: it => text(fill: rgb("#596f62"), underline(it))
@@ -362,14 +354,14 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
         RenderTemplate::Technical => {
             r##"
 #set page(width: 328pt, height: auto, margin: (x: 13pt, y: 10pt), fill: none)
-#set text(font: ("Inter", "Noto Sans CJK SC", "Microsoft YaHei", "New Computer Modern"), size: 13.25pt, lang: "zh", fill: rgb("#20231f"))
-#set par(leading: 0.48em, justify: false, spacing: 0.18em)
+#set text(font: ("Inter", "Noto Sans CJK SC", "Microsoft YaHei", "New Computer Modern"), size: 12.6pt, lang: "zh", fill: rgb("#20231f"))
+#set par(leading: 0.62em, justify: false, spacing: 0.28em)
 #set math.equation(numbering: none)
 #set list(indent: 1.05em, body-indent: 0.38em)
 #set enum(indent: 1.16em, body-indent: 0.44em)
-#show heading.where(level: 1): it => block(above: 0.02em, below: 0.13em, text(size: 1.18em, weight: 780, fill: rgb("#162019"), it))
-#show heading.where(level: 2): it => block(above: 0.18em, below: 0.1em, text(size: 1.03em, weight: 760, fill: rgb("#1e2b23"), it))
-#show heading: it => block(above: 0.12em, below: 0.08em, text(weight: 730, fill: rgb("#24332b"), it))
+#show heading.where(level: 1): it => block(above: 0.04em, below: 0.22em, text(size: 1.12em, weight: 780, fill: rgb("#162019"), it))
+#show heading.where(level: 2): it => block(above: 0.2em, below: 0.14em, text(size: 1em, weight: 760, fill: rgb("#1e2b23"), it))
+#show heading: it => block(above: 0.14em, below: 0.12em, text(size: 0.95em, weight: 730, fill: rgb("#24332b"), it))
 #show strong: it => text(weight: 780, fill: rgb("#18221b"), it)
 #show emph: it => text(style: "italic", fill: rgb("#526553"), it)
 #show link: it => text(fill: rgb("#2f7462"), underline(it))
@@ -394,14 +386,14 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
         RenderTemplate::Magazine => {
             r##"
 #set page(width: 334pt, height: auto, margin: (x: 15pt, y: 11pt), fill: none)
-#set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Inter", "Georgia", "New Computer Modern"), size: 14.9pt, lang: "zh", fill: rgb("#201b16"))
-#set par(leading: 0.64em, justify: false, spacing: 0.3em)
+#set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Inter", "Georgia", "New Computer Modern"), size: 13.6pt, lang: "zh", fill: rgb("#201b16"))
+#set par(leading: 0.72em, justify: false, spacing: 0.4em)
 #set math.equation(numbering: none)
 #set list(indent: 1.1em, body-indent: 0.44em)
 #set enum(indent: 1.22em, body-indent: 0.5em)
-#show heading.where(level: 1): it => block(above: 0em, below: 0.16em, text(size: 1.32em, weight: 780, fill: rgb("#15120f"), it))
-#show heading.where(level: 2): it => block(above: 0.24em, below: 0.12em, text(size: 1.08em, weight: 740, fill: rgb("#2b2119"), it))
-#show heading: it => block(above: 0.16em, below: 0.1em, text(weight: 730, fill: rgb("#3a2b20"), it))
+#show heading.where(level: 1): it => block(above: 0.04em, below: 0.26em, text(size: 1.22em, weight: 780, fill: rgb("#15120f"), it))
+#show heading.where(level: 2): it => block(above: 0.24em, below: 0.18em, text(size: 1.04em, weight: 740, fill: rgb("#2b2119"), it))
+#show heading: it => block(above: 0.18em, below: 0.14em, text(size: 0.96em, weight: 730, fill: rgb("#3a2b20"), it))
 #show strong: it => text(weight: 780, fill: rgb("#18120e"), it)
 #show emph: it => text(style: "italic", fill: rgb("#755b45"), it)
 #show link: it => text(fill: rgb("#9a5a3d"), underline(it))
@@ -426,14 +418,14 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
         RenderTemplate::Notebook => {
             r##"
 #set page(width: 318pt, height: auto, margin: (x: 13pt, y: 8pt), fill: none)
-#set text(font: ("LXGW WenKai", "Inter", "Noto Sans CJK SC", "Microsoft YaHei", "New Computer Modern"), size: 13.15pt, lang: "zh", fill: rgb("#282521"))
-#set par(leading: 0.5em, justify: false, spacing: 0.18em)
+#set text(font: ("LXGW WenKai", "Inter", "Noto Sans CJK SC", "Microsoft YaHei", "New Computer Modern"), size: 12.8pt, lang: "zh", fill: rgb("#282521"))
+#set par(leading: 0.64em, justify: false, spacing: 0.3em)
 #set math.equation(numbering: none)
 #set list(indent: 1.08em, body-indent: 0.4em)
 #set enum(indent: 1.16em, body-indent: 0.46em)
-#show heading.where(level: 1): it => block(above: 0.02em, below: 0.12em, text(size: 1.2em, weight: 760, fill: rgb("#22201d"), it))
-#show heading.where(level: 2): it => block(above: 0.18em, below: 0.1em, text(size: 1.04em, weight: 730, fill: rgb("#2d2924"), it))
-#show heading: it => block(above: 0.12em, below: 0.08em, text(weight: 720, fill: rgb("#37322b"), it))
+#show heading.where(level: 1): it => block(above: 0.04em, below: 0.22em, text(size: 1.14em, weight: 760, fill: rgb("#22201d"), it))
+#show heading.where(level: 2): it => block(above: 0.2em, below: 0.14em, text(size: 1em, weight: 730, fill: rgb("#2d2924"), it))
+#show heading: it => block(above: 0.14em, below: 0.12em, text(size: 0.96em, weight: 720, fill: rgb("#37322b"), it))
 #show strong: it => text(weight: 760, fill: rgb("#201d19"), it)
 #show emph: it => text(style: "italic", fill: rgb("#7b5948"), it)
 #show link: it => text(fill: rgb("#6b7457"), underline(it))
@@ -816,7 +808,7 @@ mod tests {
         })
         .unwrap();
         assert!(output.svg.contains("<svg"));
-        assert!(output.svg.contains("class=\"typst-frame\""));
+        assert!(output.svg.contains("class=\"typst-doc\""));
         assert!(svg_has_text_geometry(&output.svg));
     }
 

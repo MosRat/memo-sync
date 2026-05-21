@@ -1234,10 +1234,6 @@ textarea:focus {
 
 .typst-preview .typst-frame {
   overflow: visible;
-  width: min(100%, 620px) !important;
-  height: auto !important;
-  transform: translateZ(0);
-  text-rendering: geometricPrecision;
 }
 
 .editor-split .typst-preview svg {
