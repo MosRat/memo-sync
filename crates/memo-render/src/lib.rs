@@ -11,7 +11,7 @@ use typst::foundations::{Dict, IntoValue};
 use typst::layout::{Abs, PagedDocument};
 use typst_as_lib::{typst_kit_options::TypstKitFontOptions, TypstEngine, TypstTemplateMainFile};
 
-const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v13";
+const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v15";
 const RENDER_MAIN_TEMPLATE: &str = r#"#import sys: inputs
 #eval(inputs.source, mode: "markup")
 "#;
@@ -477,12 +477,19 @@ fn markdown_to_typst(markdown: &str) -> (String, Vec<String>) {
     let mut item_depth = 0usize;
     let mut table_depth = 0usize;
     let mut table_cell_open = false;
+    let mut paragraph_stack: Vec<bool> = Vec::new();
 
     let normalized_markdown = normalize_markdown_math(markdown);
     for event in Parser::new_ext(&normalized_markdown, options) {
         match event {
             Event::Start(tag) => match tag {
-                Tag::Paragraph => {}
+                Tag::Paragraph => {
+                    let wrap = item_depth == 0 && table_depth == 0;
+                    paragraph_stack.push(wrap);
+                    if wrap {
+                        out.push_str("#block[");
+                    }
+                }
                 Tag::Heading { level, .. } => {
                     out.push_str(&"=".repeat(heading_level_number(level)));
                     out.push(' ');
@@ -541,7 +548,9 @@ fn markdown_to_typst(markdown: &str) -> (String, Vec<String>) {
             },
             Event::End(tag) => match tag {
                 TagEnd::Paragraph => {
-                    if item_depth == 0 {
+                    if paragraph_stack.pop().unwrap_or(false) {
+                        out.push_str("]\n#v(0.82em)\n");
+                    } else if item_depth == 0 {
                         out.push_str("\n\n");
                     }
                 }
@@ -937,6 +946,15 @@ mod tests {
         let (typst, diagnostics) = markdown_to_typst("first line\n*second line*");
 
         assert!(typst.contains("first line\\\n#emph[second line]"));
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn markdown_converter_wraps_top_level_paragraphs_with_spacing() {
+        let (typst, diagnostics) = markdown_to_typst("first paragraph.\n\nsecond paragraph.");
+
+        assert!(typst.contains("#block[first paragraph.]\n#v(0.82em)"));
+        assert!(typst.contains("#block[second paragraph.]\n#v(0.82em)"));
         assert!(diagnostics.is_empty());
     }
 

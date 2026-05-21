@@ -4,7 +4,7 @@ use memo_render::{render_memo, RenderFormat, RenderMemoInput, RenderTemplate};
 
 fn main() -> anyhow::Result<()> {
     let body = env::args().nth(1).unwrap_or_else(|| {
-        "把散落在剪贴板、会议和代码里的句子，收进一个可以同步的地方。\n\nUse **Markdown**, tags, repositories, quick capture, and background sync.\n*italic*\n\n```rust\nfn main() {\n    println!(\"quiet craft, fast notes\");\n}\n```\n\n$ \\frac{1}{2} + \\sin{2} $".to_string()
+        "把散落在剪贴板、会议和代码里的句子，收进一个可以同步的地方。\n\nUse **Markdown**, tags, repositories, quick capture, and background sync.\n*italic*\n\n```rust\nfn main() {\n    println!(\"quiet craft, fast notes\");\n}\n```\n\n$ \\frac{1}{2} + \\sin{2} $\n\nthis is a par.\n\nanother par.".to_string()
     });
     let output = render_memo(RenderMemoInput {
         body,
@@ -52,6 +52,7 @@ fn main() -> anyhow::Result<()> {
         fs::create_dir_all(parent)?;
     }
     fs::write(&path, html)?;
+    fs::write(path.with_extension("svg"), &output.svg)?;
     println!("{}", path.display());
     Ok(())
 }
