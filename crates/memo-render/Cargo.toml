@@ -7,6 +7,7 @@ authors.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+pulldown-cmark = "0.13.0"
 serde.workspace = true
 sha2 = "0.10"
 typst = "0.14.2"

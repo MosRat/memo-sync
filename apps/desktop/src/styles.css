@@ -1217,12 +1217,13 @@ textarea:focus {
   display: grid;
   justify-items: center;
   align-content: start;
-  padding: 0 0 18px;
+  width: 100%;
+  padding: 0 0 16px;
 }
 
 .typst-preview svg {
   display: block;
-  width: min(100%, 620px);
+  width: min(100%, 620px) !important;
   max-width: 100%;
   height: auto;
   margin: 0 auto;
@@ -1231,8 +1232,16 @@ textarea:focus {
   box-shadow: none;
 }
 
+.typst-preview .typst-frame {
+  overflow: visible;
+  width: min(100%, 620px) !important;
+  height: auto !important;
+  transform: translateZ(0);
+  text-rendering: geometricPrecision;
+}
+
 .editor-split .typst-preview svg {
-  width: min(100%, 520px);
+  width: min(100%, 520px) !important;
 }
 
 .editor-preview .preview-surface {
@@ -1242,7 +1251,7 @@ textarea:focus {
 }
 
 .editor-preview .typst-preview svg {
-  width: min(100%, 680px);
+  width: min(100%, 680px) !important;
 }
 
 .typst-preview-pages {
@@ -1253,7 +1262,7 @@ textarea:focus {
 
 .typst-preview-asset {
   display: block;
-  width: min(100%, 620px);
+  width: min(100%, 620px) !important;
   max-width: 100%;
   height: auto;
   border: 0;
@@ -1264,9 +1273,15 @@ textarea:focus {
 }
 
 .typst-preview-asset svg {
-  width: 100%;
+  width: 100% !important;
   max-width: none;
+  height: auto !important;
   box-shadow: none;
+}
+
+.typst-preview-asset .typst-frame {
+  width: 100% !important;
+  height: auto !important;
 }
 
 .markdown h1,

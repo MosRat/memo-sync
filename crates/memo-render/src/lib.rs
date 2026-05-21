@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -8,9 +9,11 @@ use std::{
 };
 use typst::foundations::{Dict, IntoValue};
 use typst::layout::{Abs, PagedDocument};
+use typst::Document;
 use typst_as_lib::{typst_kit_options::TypstKitFontOptions, TypstEngine, TypstTemplateMainFile};
 
-const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v10";
+const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v11";
+const SVG_HTML_FRAME_TEXT_SIZE: f64 = 12.0;
 const RENDER_MAIN_TEMPLATE: &str = r#"#import sys: inputs
 #eval(inputs.source, mode: "markup")
 "#;
@@ -134,7 +137,13 @@ pub fn render_memo(input: RenderMemoInput) -> anyhow::Result<RenderMemoOutput> {
         .iter()
         .enumerate()
         .map(|(index, page)| {
-            let svg = typst_svg::svg(page);
+            let svg = typst_svg::svg_html_frame(
+                &page.frame,
+                Abs::pt(SVG_HTML_FRAME_TEXT_SIZE),
+                Some(&format!("memo-preview-page-{index}")),
+                &[],
+                document.introspector(),
+            );
             RenderPageOutput {
                 index,
                 width_pt: page.frame.width().to_pt(),
@@ -458,189 +467,241 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
 fn markdown_to_typst(markdown: &str) -> (String, Vec<String>) {
     let mut out = String::new();
     let mut diagnostics = Vec::new();
-    let mut in_fence: Option<String> = None;
-
-    for line in markdown.lines() {
-        let trimmed = line.trim();
-        if let Some(fence) = &in_fence {
-            if trimmed.starts_with(fence) {
-                out.push_str("```\n\n");
-                in_fence = None;
-            } else {
-                out.push_str(line);
-                out.push('\n');
-            }
-            continue;
-        }
-
-        if let Some(language) = trimmed.strip_prefix("```") {
-            out.push_str("```");
-            out.push_str(language.trim());
-            out.push('\n');
-            in_fence = Some("```".to_string());
-            continue;
-        }
-        if let Some(language) = trimmed.strip_prefix("~~~") {
-            out.push_str("```");
-            out.push_str(language.trim());
-            out.push('\n');
-            in_fence = Some("~~~".to_string());
-            continue;
-        }
-
-        if trimmed.is_empty() {
-            out.push('\n');
-            continue;
-        }
-
-        if trimmed.chars().all(|ch| ch == '-') && trimmed.len() >= 3 {
-            out.push_str("#line(length: 100%, stroke: 0.7pt + rgb(\"#d5cab8\"))\n\n");
-            continue;
-        }
-
-        if let Some((level, text)) = markdown_heading(trimmed) {
-            out.push_str(&"=".repeat(level));
-            out.push(' ');
-            out.push_str(&inline_markdown_to_typst(text.trim()));
-            out.push_str("\n\n");
-            continue;
-        }
-
-        if let Some(item) = trimmed
-            .strip_prefix("- ")
-            .or_else(|| trimmed.strip_prefix("* "))
-        {
-            out.push_str("- ");
-            out.push_str(&inline_markdown_to_typst(item));
-            out.push('\n');
-            continue;
-        }
-
-        if let Some(item) = ordered_markdown_item(trimmed) {
-            out.push_str("+ ");
-            out.push_str(&inline_markdown_to_typst(item));
-            out.push('\n');
-            continue;
-        }
-
-        if let Some(quote) = trimmed.strip_prefix("> ") {
-            out.push_str("#quote(block: true)[");
-            out.push_str(&inline_markdown_to_typst(quote));
-            out.push_str("]\n\n");
-            continue;
-        }
-
-        out.push_str(&inline_markdown_to_typst(line.trim_end()));
-        out.push_str("\n\n");
+    if has_unclosed_markdown_fence(markdown) {
+        diagnostics.push("Closed an unfinished Markdown code fence for preview.".to_string());
     }
 
-    if in_fence.is_some() {
-        out.push_str("```\n");
-        diagnostics.push("Closed an unfinished Markdown code fence for preview.".to_string());
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_GFM);
+    options.insert(Options::ENABLE_TABLES);
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_TASKLISTS);
+    options.insert(Options::ENABLE_MATH);
+    options.insert(Options::ENABLE_SMART_PUNCTUATION);
+    options.insert(Options::ENABLE_HEADING_ATTRIBUTES);
+
+    let mut code_block = false;
+    let mut list_stack: Vec<bool> = Vec::new();
+    let mut item_depth = 0usize;
+    let mut table_depth = 0usize;
+    let mut table_cell_open = false;
+
+    let normalized_markdown = normalize_markdown_math(markdown);
+    for event in Parser::new_ext(&normalized_markdown, options) {
+        match event {
+            Event::Start(tag) => match tag {
+                Tag::Paragraph => {}
+                Tag::Heading { level, .. } => {
+                    out.push_str(&"=".repeat(heading_level_number(level)));
+                    out.push(' ');
+                }
+                Tag::BlockQuote(_) => out.push_str("#quote(block: true)["),
+                Tag::CodeBlock(kind) => {
+                    code_block = true;
+                    out.push_str("```");
+                    if let CodeBlockKind::Fenced(language) = kind {
+                        out.push_str(language.trim());
+                    }
+                    out.push('\n');
+                }
+                Tag::List(start) => list_stack.push(start.is_some()),
+                Tag::Item => {
+                    item_depth += 1;
+                    out.push_str(if *list_stack.last().unwrap_or(&false) {
+                        "+ "
+                    } else {
+                        "- "
+                    });
+                }
+                Tag::Emphasis => out.push_str("#emph["),
+                Tag::Strong => out.push_str("#strong["),
+                Tag::Strikethrough => out.push_str("#strike["),
+                Tag::Superscript => out.push_str("#super["),
+                Tag::Subscript => out.push_str("#sub["),
+                Tag::Link { dest_url, .. } => {
+                    out.push_str("#link(\"");
+                    out.push_str(&escape_typst_string(&dest_url));
+                    out.push_str("\")[");
+                }
+                Tag::Image { dest_url, .. } => {
+                    out.push_str("#emph[image: ");
+                    out.push_str(&escape_typst_text(&dest_url));
+                    out.push_str(" / ");
+                }
+                Tag::Table(_) => {
+                    table_depth += 1;
+                    out.push_str("#block(fill: rgb(\"#f5f0e7\"), radius: 3pt, inset: 5pt)[");
+                }
+                Tag::TableHead | Tag::TableRow => {}
+                Tag::TableCell => {
+                    if table_cell_open {
+                        out.push_str(" | ");
+                    }
+                    table_cell_open = true;
+                }
+                Tag::HtmlBlock
+                | Tag::FootnoteDefinition(_)
+                | Tag::DefinitionList
+                | Tag::DefinitionListTitle
+                | Tag::DefinitionListDefinition
+                | Tag::MetadataBlock(_) => {}
+            },
+            Event::End(tag) => match tag {
+                TagEnd::Paragraph => {
+                    if item_depth == 0 {
+                        out.push_str("\n\n");
+                    }
+                }
+                TagEnd::Heading(_) => out.push_str("\n\n"),
+                TagEnd::BlockQuote(_) => out.push_str("]\n\n"),
+                TagEnd::CodeBlock => {
+                    code_block = false;
+                    out.push_str("```\n\n");
+                }
+                TagEnd::List(_) => {
+                    list_stack.pop();
+                    out.push('\n');
+                }
+                TagEnd::Item => {
+                    item_depth = item_depth.saturating_sub(1);
+                    out.push('\n');
+                }
+                TagEnd::Emphasis
+                | TagEnd::Strong
+                | TagEnd::Strikethrough
+                | TagEnd::Superscript
+                | TagEnd::Subscript
+                | TagEnd::Link
+                | TagEnd::Image => out.push(']'),
+                TagEnd::Table => {
+                    table_depth = table_depth.saturating_sub(1);
+                    table_cell_open = false;
+                    out.push_str("]\n\n");
+                }
+                TagEnd::TableHead | TagEnd::TableRow => {
+                    table_cell_open = false;
+                    out.push_str("\\\n");
+                }
+                TagEnd::TableCell => {}
+                TagEnd::HtmlBlock
+                | TagEnd::FootnoteDefinition
+                | TagEnd::DefinitionList
+                | TagEnd::DefinitionListTitle
+                | TagEnd::DefinitionListDefinition
+                | TagEnd::MetadataBlock(_) => {}
+            },
+            Event::Text(text) => {
+                if code_block {
+                    out.push_str(&text);
+                } else {
+                    out.push_str(&escape_typst_text(&text));
+                }
+            }
+            Event::Code(code) => {
+                out.push_str("#raw(\"");
+                out.push_str(&escape_typst_string(&code));
+                out.push_str("\")");
+            }
+            Event::InlineMath(math) => push_typst_math(&mut out, &math, false),
+            Event::DisplayMath(math) => push_typst_math(&mut out, &math, true),
+            Event::Html(html) | Event::InlineHtml(html) => {
+                if !html.trim().is_empty() {
+                    diagnostics.push("Ignored raw HTML in Markdown preview.".to_string());
+                }
+            }
+            Event::FootnoteReference(label) => {
+                out.push_str("#super[");
+                out.push_str(&escape_typst_text(&label));
+                out.push(']');
+            }
+            Event::SoftBreak => {
+                if code_block || table_depth > 0 {
+                    out.push('\n');
+                } else {
+                    out.push(' ');
+                }
+            }
+            Event::HardBreak => out.push_str("\\\n"),
+            Event::Rule => {
+                out.push_str("#line(length: 100%, stroke: 0.7pt + rgb(\"#d5cab8\"))\n\n")
+            }
+            Event::TaskListMarker(checked) => out.push_str(if checked { "[x] " } else { "[ ] " }),
+        }
     }
 
     (out, diagnostics)
 }
 
-fn markdown_heading(line: &str) -> Option<(usize, &str)> {
-    let level = line.chars().take_while(|ch| *ch == '#').count();
-    if level == 0 || level > 6 {
-        return None;
-    }
-    let rest = &line[level..];
-    if !rest.starts_with(' ') {
-        return None;
-    }
-    Some((level, rest))
-}
-
-fn ordered_markdown_item(line: &str) -> Option<&str> {
-    let number_len = line.chars().take_while(|ch| ch.is_ascii_digit()).count();
-    if number_len == 0 {
-        return None;
-    }
-    let rest = &line[number_len..];
-    rest.strip_prefix(". ").or_else(|| rest.strip_prefix(") "))
-}
-
-fn inline_markdown_to_typst(text: &str) -> String {
-    let mut out = String::new();
-    let mut rest = text;
-    while !rest.is_empty() {
-        if let Some((label, url, after_link)) = markdown_link(rest) {
-            out.push_str("#link(\"");
-            out.push_str(&escape_typst_string(url.trim()));
-            out.push_str("\")[");
-            out.push_str(&inline_markdown_to_typst(label));
-            out.push(']');
-            rest = after_link;
+fn has_unclosed_markdown_fence(markdown: &str) -> bool {
+    let mut fence: Option<&str> = None;
+    for line in markdown.lines() {
+        let trimmed = line.trim_start();
+        if let Some(current) = fence {
+            if trimmed.starts_with(current) {
+                fence = None;
+            }
             continue;
         }
-        if let Some(after) = rest.strip_prefix('`') {
-            if let Some(end) = after.find('`') {
-                out.push_str("#raw(\"");
-                out.push_str(&escape_typst_string(&after[..end]));
-                out.push_str("\")");
-                rest = &after[end + 1..];
-                continue;
-            }
+        if trimmed.starts_with("```") {
+            fence = Some("```");
+        } else if trimmed.starts_with("~~~") {
+            fence = Some("~~~");
         }
-        if let Some(after) = rest.strip_prefix("~~") {
-            if let Some(end) = after.find("~~") {
-                out.push_str("#strike[");
-                out.push_str(&escape_typst_text(&after[..end]));
-                out.push(']');
-                rest = &after[end + 2..];
-                continue;
-            }
-        }
-        if let Some(after) = rest.strip_prefix("**") {
-            if let Some(end) = after.find("**") {
-                out.push_str("#strong[");
-                out.push_str(&escape_typst_text(&after[..end]));
-                out.push(']');
-                rest = &after[end + 2..];
-                continue;
-            }
-        }
-        if let Some(after) = rest.strip_prefix('*') {
-            if let Some(end) = after.find('*') {
-                out.push_str("#emph[");
-                out.push_str(&escape_typst_text(&after[..end]));
-                out.push(']');
-                rest = &after[end + 1..];
-                continue;
-            }
-        }
-        if let Some(after) = rest.strip_prefix('$') {
-            if let Some(end) = after.find('$') {
-                out.push('$');
-                out.push_str(&latex_math_to_typst(after[..end].trim()));
-                out.push('$');
-                rest = &after[end + 1..];
-                continue;
-            }
-        }
-
-        let Some(ch) = rest.chars().next() else {
-            break;
-        };
-        escape_typst_char(ch, &mut out);
-        rest = &rest[ch.len_utf8()..];
     }
-    out
+    fence.is_some()
 }
 
-fn markdown_link(input: &str) -> Option<(&str, &str, &str)> {
-    let after_open = input.strip_prefix('[')?;
-    let label_end = after_open.find("](")?;
-    let url_start = label_end + 2;
-    let url_end = after_open[url_start..].find(')')? + url_start;
-    Some((
-        &after_open[..label_end],
-        &after_open[url_start..url_end],
-        &after_open[url_end + 1..],
-    ))
+fn normalize_markdown_math(markdown: &str) -> String {
+    let mut output = String::with_capacity(markdown.len());
+    let mut rest = markdown;
+    while let Some(start) = rest.find('$') {
+        output.push_str(&rest[..start]);
+        if let Some(after_open) = rest[start..].strip_prefix("$$") {
+            if let Some(end) = after_open.find("$$") {
+                output.push_str("$$");
+                output.push_str(after_open[..end].trim());
+                output.push_str("$$");
+                rest = &after_open[end + 2..];
+                continue;
+            }
+        } else {
+            let after_open = &rest[start + 1..];
+            if let Some(end) = after_open.find('$') {
+                output.push('$');
+                output.push_str(after_open[..end].trim());
+                output.push('$');
+                rest = &after_open[end + 1..];
+                continue;
+            }
+        }
+        output.push('$');
+        rest = &rest[start + 1..];
+    }
+    output.push_str(rest);
+    output
+}
+
+fn heading_level_number(level: HeadingLevel) -> usize {
+    match level {
+        HeadingLevel::H1 => 1,
+        HeadingLevel::H2 => 2,
+        HeadingLevel::H3 => 3,
+        HeadingLevel::H4 => 4,
+        HeadingLevel::H5 => 5,
+        HeadingLevel::H6 => 6,
+    }
+}
+
+fn push_typst_math(out: &mut String, math: &str, display: bool) {
+    if display {
+        out.push_str("#block(above: 0.22em, below: 0.16em)[$");
+        out.push_str(&latex_math_to_typst(math.trim()));
+        out.push_str("$]\n\n");
+    } else {
+        out.push('$');
+        out.push_str(&latex_math_to_typst(math.trim()));
+        out.push('$');
+    }
 }
 
 fn latex_math_to_typst(math: &str) -> String {
@@ -755,6 +816,7 @@ mod tests {
         })
         .unwrap();
         assert!(output.svg.contains("<svg"));
+        assert!(output.svg.contains("class=\"typst-frame\""));
         assert!(svg_has_text_geometry(&output.svg));
     }
 
@@ -826,7 +888,8 @@ mod tests {
         assert!(typst.contains("== 1.测试"));
         assert!(typst.contains("=== 测试"));
         assert!(typst.contains("#line(length: 100%"));
-        assert!(typst.ends_with("```\n"));
+        assert!(typst.contains("```rust"));
+        assert!(typst.contains("println!(\"Hello World!\");"));
         assert_eq!(diagnostics.len(), 1);
     }
 
