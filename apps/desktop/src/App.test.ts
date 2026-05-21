@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { memoHeadings, memoPreviewText, readingTimeLabel, memoSearchText, textStats, textStatsLabel, tokenizeTags } from "./search";
+import { memoHeadings, memoPreviewText, normalizeTag, readingTimeLabel, memoSearchText, textStats, textStatsLabel, tokenizeTags } from "./search";
 
 describe("tag parsing", () => {
   it("drops empty segments and preserves user order", () => {
     expect(tokenizeTags("rust, sync, , markdown")).toEqual(["rust", "sync", "markdown"]);
+  });
+
+  it("normalizes hashes, spaces, and duplicates", () => {
+    expect(tokenizeTags("#Rust, rust, 中文 标签, a,b")).toEqual(["Rust", "中文-标签", "a", "b"]);
+    expect(normalizeTag("  #long memo tag  ")).toBe("long-memo-tag");
   });
 });
 

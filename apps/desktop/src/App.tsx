@@ -60,7 +60,7 @@ import {
   updateRepository,
   windowAction,
 } from "./tauri";
-import { memoHeadings, memoPreviewText, memoSearchText, readingTimeLabel, textStatsLabel, tokenizeTags } from "./search";
+import { memoHeadings, memoPreviewText, memoSearchText, normalizeTag, readingTimeLabel, textStatsLabel } from "./search";
 import { CommandPalette, type CommandItem } from "./components/CommandPalette";
 import { MemoList } from "./components/MemoList";
 import { ToastStack, type ToastKind, type ToastMessage } from "./components/ToastStack";
@@ -118,6 +118,14 @@ const sortOptions: Array<{ value: SortMode; label: string }> = [
   { value: "size-desc", label: "Longest notes" },
 ];
 
+function toggleTag(tags: string[], tag: string) {
+  return tags.includes(tag) ? tags.filter((item) => item !== tag) : [...tags, tag];
+}
+
+function collectMemoTags(memos: Memo[]) {
+  return [...new Set(memos.filter((memo) => !memo.deleted).flatMap((memo) => memo.tags))].sort();
+}
+
 export function App() {
   const windowLabel = currentWindowLabel();
   if (isDesktopApp && windowLabel === "quick-capture") {
@@ -136,12 +144,13 @@ function WorkbenchApp() {
   const [activeRepo, setActiveRepo] = useState<string | "all">("all");
   const [activeMemoId, setActiveMemoId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [tagFilters, setTagFilters] = useState<string[]>([]);
   const [viewFilter, setViewFilter] = useState<ViewFilter>("active");
   const [mode, setMode] = useState<Mode>("split");
   const [quickOpen, setQuickOpen] = useState(false);
   const [quickText, setQuickText] = useState("");
   const [quickRepo, setQuickRepo] = useState<string>("");
+  const [quickTags, setQuickTags] = useState<string[]>(["quick"]);
   const [newRepoOpen, setNewRepoOpen] = useState(false);
   const [editingRepo, setEditingRepo] = useState<Repository | null>(null);
   const [selectedMemoIds, setSelectedMemoIds] = useState<Set<string>>(new Set());
@@ -227,7 +236,7 @@ function WorkbenchApp() {
       void searchMemos({
         repository_id: activeRepo === "all" ? null : activeRepo,
         query: query.trim() || null,
-        tags: tagFilter ? [tagFilter] : [],
+        tags: tagFilters,
         pinned: viewFilter === "pinned" ? true : null,
         archived:
           viewFilter === "archived"
@@ -245,12 +254,12 @@ function WorkbenchApp() {
       });
     }, 140);
     return () => window.clearTimeout(handle);
-  }, [activeRepo, query, tagFilter, viewFilter]);
+  }, [activeRepo, query, tagFilters, viewFilter]);
 
   function applyBootstrap(data: Awaited<ReturnType<typeof bootstrap>>, preferredMemoId?: string | null) {
     setRepositories(data.repositories);
     setMemos(data.memos);
-    setAllTags([...new Set(data.memos.flatMap((memo) => memo.tags))].sort());
+    setAllTags(collectMemoTags(data.memos));
     setDeviceId(data.device_id);
     setSettings(data.settings);
     setLocalStats(data.local_stats);
@@ -260,7 +269,7 @@ function WorkbenchApp() {
     setQuickRepo((current) => current || data.repositories[0]?.id || "");
     if (preferredMemoId) {
       setActiveRepo("all");
-      setTagFilter(null);
+      setTagFilters([]);
       setQuery("");
       setViewFilter("active");
       setActiveMemoId(preferredMemoId);
@@ -275,7 +284,7 @@ function WorkbenchApp() {
     const filtered = memos.filter((memo) => {
       if (memo.deleted) return false;
       if (activeRepo !== "all" && memo.repository_id !== activeRepo) return false;
-      if (tagFilter && !memo.tags.includes(tagFilter)) return false;
+      if (tagFilters.length && !tagFilters.every((tag) => memo.tags.includes(tag))) return false;
       if (viewFilter === "active" && memo.archived) return false;
       if (viewFilter === "pinned" && (!memo.pinned || memo.archived)) return false;
       if (viewFilter === "archived" && !memo.archived) return false;
@@ -292,10 +301,26 @@ function WorkbenchApp() {
       return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
     });
     return sorted;
-  }, [activeRepo, deferredQuery, memos, sortMode, tagFilter, viewFilter]);
+  }, [activeRepo, deferredQuery, memos, sortMode, tagFilters, viewFilter]);
 
   const activeMemo = visibleMemos.find((memo) => memo.id === activeMemoId) ?? visibleMemos[0] ?? null;
   const tags = allTags;
+  const tagStats = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const memo of memos) {
+      if (memo.deleted) continue;
+      if (activeRepo !== "all" && memo.repository_id !== activeRepo) continue;
+      if (viewFilter === "active" && memo.archived) continue;
+      if (viewFilter === "pinned" && (!memo.pinned || memo.archived)) continue;
+      if (viewFilter === "archived" && !memo.archived) continue;
+      if (viewFilter === "clipboard" && (memo.source !== "Clipboard" || memo.archived)) continue;
+      if (viewFilter === "quick" && (memo.source !== "QuickCapture" || memo.archived)) continue;
+      for (const tag of memo.tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([tag, count]) => ({ tag, count }))
+      .sort((left, right) => right.count - left.count || left.tag.localeCompare(right.tag, undefined, { sensitivity: "base" }));
+  }, [activeRepo, memos, viewFilter]);
   const activeRepository = repositories.find((repo) => repo.id === activeMemo?.repository_id);
   const activeRepoName = activeRepo === "all" ? "All notes" : repositories.find((repo) => repo.id === activeRepo)?.name ?? "Repository";
   const activeViewLabel = viewFilters.find((item) => item.id === viewFilter)?.label ?? "Inbox";
@@ -432,7 +457,7 @@ function WorkbenchApp() {
       detail: "Show all notes again",
       run: () => {
         setActiveRepo("all");
-        setTagFilter(null);
+        setTagFilters([]);
         setQuery("");
         setViewFilter("active");
       },
@@ -572,7 +597,7 @@ function WorkbenchApp() {
       detail: repo.kind === "Temporary" ? "Temporary notes" : "Persistent sync repository",
       run: () => {
         setActiveRepo(repo.id);
-        setTagFilter(null);
+        setTagFilters([]);
       },
     })),
     ...tags.slice(0, 32).map((tag) => ({
@@ -580,7 +605,7 @@ function WorkbenchApp() {
       title: tag,
       category: "Tag",
       detail: "Filter notes by tag",
-      run: () => setTagFilter(tag),
+      run: () => setTagFilters((current) => toggleTag(current, tag)),
     })),
     ...visibleMemos.slice(0, 24).map((memo) => ({
       id: `memo-${memo.id}`,
@@ -589,14 +614,14 @@ function WorkbenchApp() {
       detail: memoPreviewText(memo.body_md, 86) || "Empty memo",
       run: () => {
         setActiveRepo("all");
-        setTagFilter(null);
+        setTagFilters([]);
         setQuery("");
         setActiveMemoId(memo.id);
       },
     })),
   ];
 
-  const hasFilters = activeRepo !== "all" || viewFilter !== "active" || Boolean(tagFilter) || Boolean(query.trim());
+  const hasFilters = activeRepo !== "all" || viewFilter !== "active" || tagFilters.length > 0 || Boolean(query.trim());
 
   function memoInputFrom(memo: Memo, patch: Partial<SaveMemoInput> = {}): SaveMemoInput {
     return {
@@ -626,8 +651,11 @@ function WorkbenchApp() {
   }
 
   function replaceMemo(saved: Memo) {
-    setMemos((items) => [saved, ...items.filter((item) => item.id !== saved.id)]);
-    setAllTags((items) => [...new Set([...items, ...saved.tags])].sort());
+    setMemos((items) => {
+      const next = [saved, ...items.filter((item) => item.id !== saved.id)];
+      setAllTags(collectMemoTags(next));
+      return next;
+    });
     setActiveMemoId(saved.id);
   }
 
@@ -897,6 +925,31 @@ function WorkbenchApp() {
     });
   }
 
+  async function handleBatchTag(tagValue: string, action: "add" | "remove") {
+    const tag = normalizeTag(tagValue);
+    if (!selectedMemos.length || !tag) return;
+    await flushPendingSave();
+    const originals = selectedMemos;
+    const saved: Memo[] = [];
+    for (const memo of originals) {
+      const nextTags = action === "add" ? [...new Set([...memo.tags, tag])] : memo.tags.filter((item) => item !== tag);
+      saved.push(await saveMemo(memoInputFrom(memo, { tags: nextTags })));
+    }
+    const nextMemos = [...saved, ...memos.filter((memo) => !saved.some((item) => item.id === memo.id))];
+    setMemos(nextMemos);
+    setAllTags(collectMemoTags(nextMemos));
+    notify(action === "add" ? "success" : "info", action === "add" ? "Tag added" : "Tag removed", `#${tag} on ${saved.length} selected`, {
+      actionLabel: "Undo",
+      action: async () => {
+        const restored: Memo[] = [];
+        for (const memo of originals) restored.push(await saveMemo(memoInputFrom(memo)));
+        const restoredMemos = [...restored, ...memos.filter((memo) => !restored.some((item) => item.id === memo.id))];
+        setMemos(restoredMemos);
+        setAllTags(collectMemoTags(restoredMemos));
+      },
+    });
+  }
+
   async function handleBatchDelete() {
     if (!selectedMemos.length) return;
     await flushPendingSave();
@@ -973,7 +1026,7 @@ function WorkbenchApp() {
       repository_id: quickRepo,
       title: quickText.split("\n").find(Boolean)?.slice(0, 64) || "Quick memo",
       body_md: quickText,
-      tags: ["quick"],
+      tags: quickTags.length ? quickTags : ["quick"],
       pinned: false,
       archived: false,
     });
@@ -1087,13 +1140,20 @@ function WorkbenchApp() {
             <div className="panel-label">
               <Tag size={15} />
               Tags
+              {tagFilters.length > 0 && (
+                <button className="panel-action" onClick={() => setTagFilters([])}>
+                  Clear
+                </button>
+              )}
             </div>
             <div className="tags">
-              {tags.map((tag) => (
-                <button key={tag} className={tagFilter === tag ? "tag active" : "tag"} onClick={() => setTagFilter(tagFilter === tag ? null : tag)}>
-                  {tag}
+              {tagStats.map(({ tag, count }) => (
+                <button key={tag} className={tagFilters.includes(tag) ? "tag active" : "tag"} onClick={() => setTagFilters((current) => toggleTag(current, tag))}>
+                  <span>{tag}</span>
+                  <strong>{count}</strong>
                 </button>
               ))}
+              {!tagStats.length && <span className="tag-empty">No tags yet</span>}
             </div>
           </div>
 
@@ -1154,11 +1214,11 @@ function WorkbenchApp() {
             <button className={activeRepo !== "all" ? "context-chip active" : "context-chip"} onClick={() => setActiveRepo("all")}>
               {activeRepoName}
             </button>
-            {tagFilter && (
-              <button className="context-chip active" onClick={() => setTagFilter(null)}>
-                #{tagFilter}
+            {tagFilters.map((tag) => (
+              <button key={tag} className="context-chip active" onClick={() => setTagFilters((current) => current.filter((item) => item !== tag))}>
+                #{tag}
               </button>
-            )}
+            ))}
             {query.trim() && (
               <button className="context-chip active" onClick={() => setQuery("")}>
                 {query.trim()}
@@ -1169,7 +1229,7 @@ function WorkbenchApp() {
                 className="context-clear"
                 onClick={() => {
                   setActiveRepo("all");
-                  setTagFilter(null);
+                  setTagFilters([]);
                   setQuery("");
                   setViewFilter("active");
                 }}
@@ -1225,6 +1285,33 @@ function WorkbenchApp() {
                   </option>
                 ))}
               </select>
+              <select value="" onChange={(event) => event.target.value && handleBatchTag(event.target.value, "add")}>
+                <option value="">Add tag...</option>
+                {tags.map((tag) => (
+                  <option key={tag} value={tag}>
+                    #{tag}
+                  </option>
+                ))}
+              </select>
+              <select value="" onChange={(event) => event.target.value && handleBatchTag(event.target.value, "remove")}>
+                <option value="">Remove tag...</option>
+                {tags.map((tag) => (
+                  <option key={tag} value={tag}>
+                    #{tag}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="batch-tag-input"
+                placeholder="new tag"
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  const value = event.currentTarget.value;
+                  void handleBatchTag(value, "add");
+                  event.currentTarget.value = "";
+                }}
+              />
               <button className="danger-soft" onClick={handleBatchDelete}>
                 <Trash2 size={14} />
                 Delete
@@ -1331,14 +1418,10 @@ function WorkbenchApp() {
                     </option>
                   ))}
                 </select>
-                <input
-                  value={activeMemo.tags.join(", ")}
-                  onChange={(event) =>
-                    handleSave({
-                      tags: tokenizeTags(event.target.value),
-                    }, { debounce: true })
-                  }
-                  placeholder="tags"
+                <TagEditor
+                  tags={activeMemo.tags}
+                  suggestions={tags}
+                  onChange={(nextTags) => handleSave({ tags: nextTags }, { debounce: true })}
                 />
               </div>
 
@@ -1398,7 +1481,7 @@ function WorkbenchApp() {
                   <article className="markdown preview-surface">
                     <TypstPreview
                       body={activeMemo.body_md}
-                      format={activeMemo.tags.includes("typst") ? "typst" : "markdown"}
+                      format={activeMemo.tags.some((tag) => tag.toLowerCase() === "typst") ? "typst" : "markdown"}
                       renderPath={settings.preview_render_path}
                       template={settings.preview_template}
                     />
@@ -1438,6 +1521,7 @@ function WorkbenchApp() {
                 </option>
               ))}
             </select>
+            <TagEditor tags={quickTags} suggestions={tags} onChange={setQuickTags} />
             <textarea autoFocus value={quickText} onChange={(event) => setQuickText(event.target.value)} />
             <div className="modal-actions">
               <button className="secondary" onClick={fillQuickFromClipboard}>
@@ -1474,11 +1558,81 @@ function WorkbenchApp() {
   );
 }
 
+function TagEditor({
+  tags,
+  suggestions,
+  onChange,
+}: {
+  tags: string[];
+  suggestions: string[];
+  onChange: (tags: string[]) => void | Promise<void>;
+}) {
+  const [draft, setDraft] = useState("");
+  const normalizedDraft = normalizeTag(draft);
+  const available = suggestions
+    .filter((tag) => !tags.includes(tag))
+    .filter((tag) => !normalizedDraft || tag.toLowerCase().includes(normalizedDraft.toLowerCase()))
+    .slice(0, 5);
+
+  function commitTag(value = draft) {
+    const tag = normalizeTag(value);
+    if (!tag || tags.some((item) => item.toLowerCase() === tag.toLowerCase())) {
+      setDraft("");
+      return;
+    }
+    void onChange([...tags, tag]);
+    setDraft("");
+  }
+
+  function removeTag(tag: string) {
+    void onChange(tags.filter((item) => item !== tag));
+  }
+
+  return (
+    <div className="tag-editor">
+      <div className="tag-editor-row">
+        {tags.map((tag) => (
+          <button key={tag} type="button" className="tag-chip" title={`Remove ${tag}`} onClick={() => removeTag(tag)}>
+            #{tag}
+            <X size={11} />
+          </button>
+        ))}
+        <input
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === "," || event.key === "Tab") {
+              event.preventDefault();
+              commitTag();
+            } else if (event.key === "Backspace" && !draft && tags.length) {
+              event.preventDefault();
+              removeTag(tags[tags.length - 1]);
+            }
+          }}
+          onBlur={() => draft.trim() && commitTag()}
+          placeholder={tags.length ? "add tag" : "tags"}
+        />
+      </div>
+      {available.length > 0 && (
+        <div className="tag-suggestions">
+          {available.map((tag) => (
+            <button key={tag} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => commitTag(tag)}>
+              #{tag}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function QuickCaptureWindow() {
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
+  const [allTags, setAllTags] = useState<string[]>([]);
   const [quickRepo, setQuickRepo] = useState("");
   const [quickText, setQuickText] = useState("");
+  const [quickTags, setQuickTags] = useState<string[]>(["quick"]);
   const [message, setMessage] = useState("");
   const [captureMode, setCaptureMode] = useState<CaptureMode>("split");
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
@@ -1493,6 +1647,7 @@ function QuickCaptureWindow() {
     bootstrap().then((data) => {
       setRepositories(data.repositories);
       setSettings(data.settings);
+      setAllTags(collectMemoTags(data.memos));
       setQuickRepo(data.repositories[0]?.id ?? "");
     });
     const unsubs: Array<() => void> = [];
@@ -1522,7 +1677,7 @@ function QuickCaptureWindow() {
       repository_id: quickRepo,
       title: quickText.split("\n").find(Boolean)?.slice(0, 64) || "Quick memo",
       body_md: quickText,
-      tags: ["quick"],
+      tags: quickTags.length ? quickTags : ["quick"],
       pinned: false,
       archived: false,
     });
@@ -1593,6 +1748,10 @@ function QuickCaptureWindow() {
                 </option>
               ))}
             </select>
+          </div>
+          <div className="capture-tag-field">
+            <p className="eyebrow">Tags</p>
+            <TagEditor tags={quickTags} suggestions={allTags} onChange={setQuickTags} />
           </div>
           <small>{message}</small>
         </div>

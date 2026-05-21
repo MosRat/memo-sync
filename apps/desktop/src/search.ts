@@ -1,10 +1,24 @@
 import type { Memo } from "./types";
 
 export function tokenizeTags(input: string) {
+  const seen = new Set<string>();
   return input
     .split(",")
-    .map((tag) => tag.trim())
-    .filter(Boolean);
+    .map(normalizeTag)
+    .filter((tag) => {
+      if (!tag || seen.has(tag.toLowerCase())) return false;
+      seen.add(tag.toLowerCase());
+      return true;
+    });
+}
+
+export function normalizeTag(input: string) {
+  return input
+    .trim()
+    .replace(/^#+/, "")
+    .replace(/\s+/g, "-")
+    .replace(/[,\u0000-\u001f]/g, "")
+    .slice(0, 48);
 }
 
 export function memoSearchText(memo: Memo) {
