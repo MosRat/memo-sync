@@ -33,7 +33,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { type CSSProperties, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import type { AppSettings, LocalStats, Memo, RenderTemplate, Repository, SaveMemoInput } from "./types";
 import {
   bootstrap,
@@ -60,7 +60,7 @@ import {
   updateRepository,
   windowAction,
 } from "./tauri";
-import { memoSearchText, textStatsLabel, tokenizeTags } from "./search";
+import { memoHeadings, memoPreviewText, memoSearchText, readingTimeLabel, textStatsLabel, tokenizeTags } from "./search";
 import { CommandPalette, type CommandItem } from "./components/CommandPalette";
 import { MemoList } from "./components/MemoList";
 import { ToastStack, type ToastKind, type ToastMessage } from "./components/ToastStack";
@@ -92,6 +92,8 @@ type Mode = "edit" | "preview" | "split";
 type Dialog = "settings" | "shortcuts" | "about" | null;
 type CaptureMode = "edit" | "split" | "preview";
 type ViewFilter = "active" | "pinned" | "archived" | "clipboard" | "quick";
+type SortMode = "updated-desc" | "created-desc" | "title-asc" | "size-desc";
+type ListDensity = "comfortable" | "compact";
 
 const viewFilters: Array<{ id: ViewFilter; label: string; icon: typeof FileText }> = [
   { id: "active", label: "Inbox", icon: FileText },
@@ -107,6 +109,13 @@ const previewTemplateOptions: Array<{ value: RenderTemplate; label: string; deta
   { value: "technical", label: "Technical code", detail: "code first" },
   { value: "magazine", label: "Magazine", detail: "editorial" },
   { value: "notebook", label: "Notebook", detail: "annotation" },
+];
+
+const sortOptions: Array<{ value: SortMode; label: string }> = [
+  { value: "updated-desc", label: "Recently edited" },
+  { value: "created-desc", label: "Newest created" },
+  { value: "title-asc", label: "Title A-Z" },
+  { value: "size-desc", label: "Longest notes" },
 ];
 
 export function App() {
@@ -146,6 +155,8 @@ function WorkbenchApp() {
   const [saveText, setSaveText] = useState("Saved");
   const [commandOpen, setCommandOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [sortMode, setSortMode] = useState<SortMode>(() => (localStorage.getItem("memo-sort-mode") as SortMode | null) ?? "updated-desc");
+  const [listDensity, setListDensity] = useState<ListDensity>(() => (localStorage.getItem("memo-list-density") as ListDensity | null) ?? "comfortable");
   const quickRepoRef = useRef("");
   const repositoriesRef = useRef<Repository[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -162,6 +173,14 @@ function WorkbenchApp() {
   useEffect(() => {
     repositoriesRef.current = repositories;
   }, [repositories]);
+
+  useEffect(() => {
+    localStorage.setItem("memo-sort-mode", sortMode);
+  }, [sortMode]);
+
+  useEffect(() => {
+    localStorage.setItem("memo-list-density", listDensity);
+  }, [listDensity]);
 
   useEffect(() => {
     bootstrap().then(applyBootstrap);
@@ -250,9 +269,10 @@ function WorkbenchApp() {
     }
   }
 
+  const deferredQuery = useDeferredValue(query);
   const visibleMemos = useMemo(() => {
-    const lower = query.trim().toLowerCase();
-    return memos.filter((memo) => {
+    const lower = deferredQuery.trim().toLowerCase();
+    const filtered = memos.filter((memo) => {
       if (memo.deleted) return false;
       if (activeRepo !== "all" && memo.repository_id !== activeRepo) return false;
       if (tagFilter && !memo.tags.includes(tagFilter)) return false;
@@ -264,7 +284,15 @@ function WorkbenchApp() {
       if (!lower) return true;
       return memoSearchText(memo).includes(lower);
     });
-  }, [activeRepo, memos, query, tagFilter, viewFilter]);
+    const sorted = [...filtered];
+    sorted.sort((left, right) => {
+      if (sortMode === "title-asc") return left.title.localeCompare(right.title, undefined, { sensitivity: "base" });
+      if (sortMode === "created-desc") return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
+      if (sortMode === "size-desc") return right.meta.byte_len - left.meta.byte_len;
+      return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
+    });
+    return sorted;
+  }, [activeRepo, deferredQuery, memos, sortMode, tagFilter, viewFilter]);
 
   const activeMemo = visibleMemos.find((memo) => memo.id === activeMemoId) ?? visibleMemos[0] ?? null;
   const tags = allTags;
@@ -274,6 +302,8 @@ function WorkbenchApp() {
   const captureRepoId = activeRepo !== "all" ? activeRepo : quickRepo || repositories[0]?.id || "";
   const selectedMemos = useMemo(() => visibleMemos.filter((memo) => selectedMemoIds.has(memo.id)), [selectedMemoIds, visibleMemos]);
   const activeMemoStats = useMemo(() => textStatsLabel(activeMemo?.body_md ?? ""), [activeMemo?.body_md]);
+  const activeMemoReadTime = useMemo(() => readingTimeLabel(activeMemo?.body_md ?? ""), [activeMemo?.body_md]);
+  const activeMemoHeadings = useMemo(() => memoHeadings(activeMemo?.body_md ?? "").slice(0, 8), [activeMemo?.body_md]);
 
   useEffect(() => {
     setSelectedMemoIds((current) => {
@@ -496,6 +526,20 @@ function WorkbenchApp() {
       detail: "Read the rendered memo",
       run: () => setMode("preview"),
     },
+    ...sortOptions.map((option) => ({
+      id: `sort-${option.value}`,
+      title: `Sort: ${option.label}`,
+      category: "View",
+      detail: option.value === sortMode ? "Current sort" : "Change memo ordering",
+      run: () => setSortMode(option.value),
+    })),
+    {
+      id: "toggle-density",
+      title: listDensity === "compact" ? "Comfortable list density" : "Compact list density",
+      category: "View",
+      detail: "Change memo row spacing",
+      run: () => setListDensity((density) => (density === "compact" ? "comfortable" : "compact")),
+    },
     {
       id: "toggle-sidebar",
       title: sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar",
@@ -542,7 +586,7 @@ function WorkbenchApp() {
       id: `memo-${memo.id}`,
       title: memo.title,
       category: "Memo",
-      detail: memo.body_md.replace(/[#*_`]/g, "").slice(0, 86) || "Empty memo",
+      detail: memoPreviewText(memo.body_md, 86) || "Empty memo",
       run: () => {
         setActiveRepo("all");
         setTagFilter(null);
@@ -702,6 +746,20 @@ function WorkbenchApp() {
     const next = `${body.slice(0, start)}${block}${body.slice(end)}`;
     const caret = start + block.length - 5;
     updateEditorBody(next, { start: caret, end: caret });
+  }
+
+  function jumpToHeading(line: number) {
+    if (!activeMemo) return;
+    if (mode === "preview") setMode("split");
+    const lines = activeMemo.body_md.split(/\r\n|\r|\n/);
+    const start = lines.slice(0, line).join("\n").length + (line > 0 ? 1 : 0);
+    const end = start + (lines[line]?.length ?? 0);
+    window.requestAnimationFrame(() => {
+      const editor = editorRef.current;
+      editor?.focus();
+      editor?.setSelectionRange(start, end);
+      editor?.scrollTo({ top: Math.max(0, (line - 2) * 25), behavior: "smooth" });
+    });
   }
 
   function handleEditorKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -1136,6 +1194,22 @@ function WorkbenchApp() {
               );
             })}
           </div>
+          <div className="list-tuning" aria-label="Memo list display">
+            <select value={sortMode} onChange={(event) => setSortMode(event.target.value as SortMode)} title="Sort memos">
+              {sortOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <button
+              className={listDensity === "compact" ? "active" : ""}
+              onClick={() => setListDensity((density) => (density === "compact" ? "comfortable" : "compact"))}
+              title="Toggle compact memo list"
+            >
+              {listDensity === "compact" ? "Compact" : "Comfort"}
+            </button>
+          </div>
           {selectedMemos.length > 0 && (
             <div className="batch-bar">
               <strong>{selectedMemos.length} selected</strong>
@@ -1186,6 +1260,7 @@ function WorkbenchApp() {
             memos={visibleMemos}
             activeMemoId={activeMemo?.id ?? null}
             selectedIds={selectedMemoIds}
+            density={listDensity}
             onSelect={(id) => {
               void flushPendingSave();
               setActiveMemoId(id);
@@ -1247,6 +1322,7 @@ function WorkbenchApp() {
                 <span>{deviceId.slice(0, 24)}</span>
                 <span className={saveText === "Saved" ? "save-state saved" : "save-state"}>{saveText}</span>
                 <span>{activeMemoStats}</span>
+                <span>{activeMemoReadTime}</span>
                 <select className="repo-select" value={activeMemo.repository_id} onChange={(event) => handleMoveMemo(activeMemo, event.target.value)}>
                   {repositories.map((repo) => (
                     <option key={repo.id} value={repo.id}>
@@ -1291,6 +1367,21 @@ function WorkbenchApp() {
                   </button>
                   <span>Ctrl+Enter saves now</span>
                 </div>
+              )}
+              {activeMemoHeadings.length > 0 && (
+                <nav className="outline-strip" aria-label="Memo outline">
+                  <span>Outline</span>
+                  {activeMemoHeadings.map((heading) => (
+                    <button
+                      key={`${heading.line}:${heading.title}`}
+                      className={`level-${heading.level}`}
+                      title={`Jump to ${heading.title}`}
+                      onClick={() => jumpToHeading(heading.line)}
+                    >
+                      {heading.title}
+                    </button>
+                  ))}
+                </nav>
               )}
 
               <div className={`editor-grid ${mode}`}>

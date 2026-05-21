@@ -578,6 +578,37 @@ textarea:focus {
   text-overflow: ellipsis;
 }
 
+.list-tuning {
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.list-tuning select,
+.list-tuning button {
+  height: 32px;
+  border-radius: 8px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  background: rgba(255, 252, 245, 0.5);
+}
+
+.list-tuning select {
+  min-width: 0;
+  padding: 0 9px;
+}
+
+.list-tuning button {
+  padding: 0 10px;
+  box-shadow: inset 0 0 0 1px rgba(62, 54, 44, 0.08);
+}
+
+.list-tuning button.active {
+  color: #53685b;
+  background: rgba(112, 139, 118, 0.14);
+}
+
 .batch-bar {
   min-height: 38px;
   display: grid;
@@ -657,6 +688,26 @@ textarea:focus {
   border: 1px solid transparent;
   animation: row-enter 150ms ease both;
   transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.memo-row.compact {
+  height: 88px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  gap: 4px;
+}
+
+.memo-row.compact strong {
+  margin-bottom: 3px;
+  font-size: 14px;
+}
+
+.memo-row.compact p {
+  -webkit-line-clamp: 1;
+}
+
+.memo-row.compact .memo-row-check {
+  top: 13px;
 }
 
 .memo-row:hover {
@@ -1044,6 +1095,55 @@ textarea:focus {
   color: var(--muted);
   font-family: var(--font-ui);
   font-size: 13px;
+}
+
+.outline-strip {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  padding: 4px;
+  border-radius: 9px;
+  background: rgba(219, 211, 194, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(62, 54, 44, 0.07);
+}
+
+.outline-strip > span {
+  flex: 0 0 auto;
+  padding: 0 7px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.outline-strip button {
+  min-width: 0;
+  max-width: 180px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-soft);
+  font-size: 12px;
+  background: rgba(255, 252, 245, 0.52);
+  box-shadow: inset 0 0 0 1px rgba(62, 54, 44, 0.06);
+}
+
+.outline-strip button:hover {
+  color: var(--ink);
+  background: rgba(255, 252, 245, 0.86);
+}
+
+.outline-strip .level-2 {
+  opacity: 0.9;
+}
+
+.outline-strip .level-3 {
+  opacity: 0.78;
 }
 
 .render-warning,

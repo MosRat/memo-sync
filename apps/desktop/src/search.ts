@@ -36,3 +36,39 @@ export function textStatsLabel(input: string) {
   const stats = textStats(input);
   return `${stats.lines} lines / ${stats.words} words / ${stats.chars} chars`;
 }
+
+export function readingTimeLabel(input: string) {
+  const stats = textStats(input);
+  const minutes = Math.max(1, Math.ceil(stats.words / 320));
+  return `${minutes} min read`;
+}
+
+export function memoPreviewText(markdown: string, limit = 110) {
+  return markdown
+    .replace(/```[\s\S]*?```/g, " code ")
+    .replace(/[#*_`>\-[\]()]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, limit);
+}
+
+export function memoHeadings(markdown: string) {
+  let inFence = false;
+  const headings: Array<{ line: number; level: number; title: string }> = [];
+  markdown.split(/\r\n|\r|\n/).forEach((line, index) => {
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence;
+      return;
+    }
+    if (!inFence) {
+      const match = /^(#{1,3})\s+(.+)$/.exec(line.trim());
+      if (!match) return;
+      headings.push({
+        line: index,
+        level: match[1].length,
+        title: match[2].replace(/[*_`]/g, "").trim().slice(0, 72),
+      });
+    }
+  });
+  return headings;
+}

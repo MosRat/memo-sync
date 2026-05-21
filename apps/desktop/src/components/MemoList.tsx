@@ -1,24 +1,27 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Memo } from "../types";
+import { memoPreviewText } from "../search";
 
-const rowHeight = 128;
 const overscan = 4;
 
 function MemoListView({
   memos,
   activeMemoId,
   selectedIds,
+  density,
   onSelect,
   onToggleSelected,
 }: {
   memos: Memo[];
   activeMemoId: string | null;
   selectedIds: Set<string>;
+  density: "comfortable" | "compact";
   onSelect: (id: string) => void;
   onToggleSelected: (id: string) => void;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState({ top: 0, height: 0 });
+  const rowHeight = density === "compact" ? 96 : 128;
   const activeIndex = memos.findIndex((item) => item.id === activeMemoId);
   const range = useMemo(() => {
     const start = Math.max(0, Math.floor(viewport.top / rowHeight) - overscan);
@@ -73,7 +76,7 @@ function MemoListView({
           return (
             <button
               key={item.id}
-              className={`${activeMemoId === item.id ? "memo-row active" : "memo-row"} ${selectedIds.has(item.id) ? "selected" : ""}`}
+              className={`${activeMemoId === item.id ? "memo-row active" : "memo-row"} ${selectedIds.has(item.id) ? "selected" : ""} ${density === "compact" ? "compact" : ""}`}
               style={{ transform: `translateY(${absoluteIndex * rowHeight}px)` }}
               onClick={() => onSelect(item.id)}
             >
@@ -95,7 +98,7 @@ function MemoListView({
               />
               <div>
                 <strong>{item.title}</strong>
-                <p>{item.body_md.replace(/[#*_`]/g, "").slice(0, 110) || "Empty memo"}</p>
+                <p>{memoPreviewText(item.body_md) || "Empty memo"}</p>
               </div>
               <footer>
                 <span>{new Date(item.updated_at).toLocaleDateString()}</span>
