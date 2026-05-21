@@ -6,7 +6,7 @@ import type { PreviewRenderPath, RenderFormat, RenderPageAssetOutput, RenderTemp
 const MarkdownView = lazy(() => import("../MarkdownView"));
 const PREVIEW_CACHE_MAX_ENTRIES = 18;
 const PREVIEW_CACHE_MAX_BYTES = 12 * 1024 * 1024;
-const PREVIEW_CACHE_VERSION = "typst-page-svg-v16";
+const PREVIEW_CACHE_VERSION = "typst-page-svg-v17";
 
 type RenderState =
   | { kind: "idle" | "loading" | "markdown" }
@@ -235,10 +235,21 @@ function TypstPreviewView({
     );
   }
 
+  if (state.kind === "fallback") {
+    return (
+      <>
+        <details className="render-warning">
+          <summary>Preview fell back to plain text</summary>
+          <pre>{state.message}</pre>
+        </details>
+        <pre className="fallback-text">{body}</pre>
+      </>
+    );
+  }
+
   return (
     <>
       {state.kind === "loading" && <p className="markdown-loading">Rendering with Typst...</p>}
-      {state.kind === "fallback" && <p className="render-warning">Typst fallback: {state.message}</p>}
       <Suspense fallback={<p className="markdown-loading">Rendering preview...</p>}>
         <MarkdownView>{body}</MarkdownView>
       </Suspense>

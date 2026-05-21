@@ -11,7 +11,7 @@ use typst::foundations::{Dict, IntoValue};
 use typst::layout::{Abs, PagedDocument};
 use typst_as_lib::{typst_kit_options::TypstKitFontOptions, TypstEngine, TypstTemplateMainFile};
 
-const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v16";
+const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v17";
 const RENDER_MAIN_TEMPLATE: &str = r#"#import sys: inputs
 #eval(inputs.source, mode: "markup")
 "#;
@@ -788,7 +788,7 @@ fn escape_typst_text(text: &str) -> String {
 
 fn escape_typst_char(ch: char, out: &mut String) {
     match ch {
-        '\\' | '#' | '*' | '_' | '`' | '$' | '[' | ']' | '<' | '>' | '=' | '+' | '-' => {
+        '\\' | '#' | '*' | '_' | '`' | '$' | '[' | ']' | '<' | '>' | '=' | '+' | '-' | '@' => {
             out.push('\\');
             out.push(ch);
         }
@@ -945,6 +945,15 @@ mod tests {
     }
 
     #[test]
+    fn markdown_converter_escapes_typst_reference_syntax_in_plain_text() {
+        let (typst, diagnostics) =
+            markdown_to_typst("Account LaishaGavlin2608@hotmail.com should render as text.");
+
+        assert!(typst.contains("LaishaGavlin2608\\@hotmail.com"));
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
     fn markdown_converter_keeps_links_quotes_and_ordered_lists() {
         let (typst, diagnostics) = markdown_to_typst(
             "> Quote with [link](https://example.com) and ~~old~~ text.\n\n1. first\n2) second",
@@ -994,6 +1003,20 @@ mod tests {
 
         assert!(svg_has_text_geometry(&output.svg));
         assert!(output.svg.matches("<use").count() > 15);
+    }
+
+    #[test]
+    fn markdown_email_address_renders_as_plain_text() {
+        let output = render_memo(RenderMemoInput {
+            body: "账号 LaishaGavlin2608@hotmail.com\n接码地址：https://example.com/mailbox"
+                .to_string(),
+            format: RenderFormat::Markdown,
+            template: RenderTemplate::Literary,
+        })
+        .unwrap();
+
+        assert!(svg_has_text_geometry(&output.svg));
+        assert!(output.svg.matches("<use").count() > 20);
     }
 
     #[test]
