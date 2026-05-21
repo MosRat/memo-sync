@@ -10,7 +10,7 @@ use typst::foundations::{Dict, IntoValue};
 use typst::layout::{Abs, PagedDocument};
 use typst_as_lib::{typst_kit_options::TypstKitFontOptions, TypstEngine, TypstTemplateMainFile};
 
-const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v8";
+const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v9";
 const RENDER_MAIN_TEMPLATE: &str = r#"#import sys: inputs
 #eval(inputs.source, mode: "markup")
 "#;
@@ -289,45 +289,54 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
         RenderTemplate::Literary => {
             r##"
 #set page(width: 320pt, height: auto, margin: (x: 14pt, y: 10pt), fill: none)
-#set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Inter", "Microsoft YaHei", "New Computer Modern"), size: 14.8pt, lang: "zh", fill: rgb("#211f1b"))
-#set par(leading: 0.72em, justify: false, spacing: 0.46em)
-#show heading: it => block(above: 0.26em, below: 0.24em, text(weight: 720, fill: rgb("#171512"), it))
+#set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Inter", "Microsoft YaHei", "New Computer Modern"), size: 14.5pt, lang: "zh", fill: rgb("#211f1b"))
+#set par(leading: 0.66em, justify: false, spacing: 0.34em)
+#set math.equation(numbering: none)
+#show heading: it => block(above: 0.18em, below: 0.18em, text(weight: 730, fill: rgb("#171512"), it))
 #show raw: it => block(
-  fill: rgb("#20261f"),
-  radius: 5pt,
-  inset: 8pt,
+  fill: rgb("#1f261f"),
+  radius: 4pt,
+  inset: 7pt,
+  above: 0.34em,
+  below: 0.24em,
   width: 100%,
-  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 10.7pt, fill: rgb("#eaf1e4"), it)
+  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.6pt, fill: rgb("#eaf1e4"), it)
 )
 "##
         }
         RenderTemplate::Compact => {
             r##"
 #set page(width: 304pt, height: auto, margin: (x: 12pt, y: 9pt), fill: none)
-#set text(font: ("Inter", "Noto Sans CJK SC", "Microsoft YaHei", "New Computer Modern"), size: 13.2pt, lang: "zh", fill: rgb("#27231f"))
-#set par(leading: 0.54em, justify: false, spacing: 0.24em)
-#show heading: it => block(above: 0.18em, below: 0.14em, text(weight: 720, fill: rgb("#24211d"), it))
+#set text(font: ("Inter", "Noto Sans CJK SC", "Microsoft YaHei", "New Computer Modern"), size: 13pt, lang: "zh", fill: rgb("#27231f"))
+#set par(leading: 0.5em, justify: false, spacing: 0.2em)
+#set math.equation(numbering: none)
+#show heading: it => block(above: 0.14em, below: 0.12em, text(weight: 720, fill: rgb("#24211d"), it))
 #show raw: it => block(
   fill: rgb("#20261f"),
   radius: 4pt,
-  inset: 7.5pt,
+  inset: 6.5pt,
+  above: 0.28em,
+  below: 0.18em,
   width: 100%,
-  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.7pt, fill: rgb("#eaf1e4"), it)
+  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.1pt, fill: rgb("#eaf1e4"), it)
 )
 "##
         }
         RenderTemplate::Technical => {
             r##"
 #set page(width: 328pt, height: auto, margin: (x: 13pt, y: 10pt), fill: none)
-#set text(font: ("Inter", "Noto Sans CJK SC", "Microsoft YaHei", "New Computer Modern"), size: 13.8pt, lang: "zh", fill: rgb("#20231f"))
-#set par(leading: 0.58em, justify: false, spacing: 0.3em)
-#show heading: it => block(above: 0.22em, below: 0.18em, text(weight: 740, fill: rgb("#1e2520"), it))
+#set text(font: ("Inter", "Noto Sans CJK SC", "Microsoft YaHei", "New Computer Modern"), size: 13.5pt, lang: "zh", fill: rgb("#20231f"))
+#set par(leading: 0.52em, justify: false, spacing: 0.22em)
+#set math.equation(numbering: none)
+#show heading: it => block(above: 0.16em, below: 0.14em, text(weight: 740, fill: rgb("#1e2520"), it))
 #show raw: it => block(
-  fill: rgb("#18201b"),
+  fill: rgb("#151d19"),
   radius: 4pt,
-  inset: 8pt,
+  inset: 7pt,
+  above: 0.3em,
+  below: 0.2em,
   width: 100%,
-  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 10.2pt, fill: rgb("#dfece2"), it)
+  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.5pt, fill: rgb("#dfece2"), it)
 )
 "##
         }
@@ -335,15 +344,18 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
             r##"
 #set page(width: 334pt, height: auto, margin: (x: 15pt, y: 11pt), fill: none)
 #set text(font: ("Noto Serif CJK SC", "Noto Serif SC", "Inter", "Georgia", "New Computer Modern"), size: 15.2pt, lang: "zh", fill: rgb("#201b16"))
-#set par(leading: 0.8em, justify: false, spacing: 0.5em)
-#show heading: it => block(above: 0.18em, below: 0.22em, text(weight: 760, fill: rgb("#15120f"), it))
+#set par(leading: 0.7em, justify: false, spacing: 0.34em)
+#set math.equation(numbering: none)
+#show heading: it => block(above: 0.16em, below: 0.18em, text(weight: 760, fill: rgb("#15120f"), it))
 #show emph: it => text(style: "italic", fill: rgb("#755b45"), it)
 #show raw: it => block(
-  fill: rgb("#211f1b"),
+  fill: rgb("#211d19"),
   radius: 5pt,
-  inset: 8.5pt,
+  inset: 7.5pt,
+  above: 0.34em,
+  below: 0.24em,
   width: 100%,
-  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 10pt, fill: rgb("#f6efe4"), it)
+  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.4pt, fill: rgb("#f6efe4"), it)
 )
 "##
         }
@@ -351,15 +363,18 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
             r##"
 #set page(width: 318pt, height: auto, margin: (x: 13pt, y: 9pt), fill: none)
 #set text(font: ("LXGW WenKai", "Inter", "Noto Sans CJK SC", "Microsoft YaHei", "New Computer Modern"), size: 13.4pt, lang: "zh", fill: rgb("#282521"))
-#set par(leading: 0.6em, justify: false, spacing: 0.28em)
+#set par(leading: 0.54em, justify: false, spacing: 0.22em)
+#set math.equation(numbering: none)
 #show heading: it => block(above: 0.16em, below: 0.14em, text(weight: 730, fill: rgb("#22201d"), it))
 #show quote: it => block(stroke: (left: 2pt + rgb("#c86f52")), inset: (left: 8pt), above: 0.28em, below: 0.2em, text(fill: rgb("#675a50"), it))
 #show raw: it => block(
-  fill: rgb("#1f2924"),
+  fill: rgb("#1d2722"),
   radius: 4pt,
-  inset: 7pt,
+  inset: 6.5pt,
+  above: 0.28em,
+  below: 0.18em,
   width: 100%,
-  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.4pt, fill: rgb("#e9f2ea"), it)
+  text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 8.9pt, fill: rgb("#e9f2ea"), it)
 )
 "##
         }
@@ -479,10 +494,28 @@ fn inline_markdown_to_typst(text: &str) -> String {
         }
         if let Some(after) = rest.strip_prefix("**") {
             if let Some(end) = after.find("**") {
-                out.push('*');
+                out.push_str("#strong[");
                 out.push_str(&escape_typst_text(&after[..end]));
-                out.push('*');
+                out.push(']');
                 rest = &after[end + 2..];
+                continue;
+            }
+        }
+        if let Some(after) = rest.strip_prefix('*') {
+            if let Some(end) = after.find('*') {
+                out.push_str("#emph[");
+                out.push_str(&escape_typst_text(&after[..end]));
+                out.push(']');
+                rest = &after[end + 1..];
+                continue;
+            }
+        }
+        if let Some(after) = rest.strip_prefix('$') {
+            if let Some(end) = after.find('$') {
+                out.push('$');
+                out.push_str(&latex_math_to_typst(after[..end].trim()));
+                out.push('$');
+                rest = &after[end + 1..];
                 continue;
             }
         }
@@ -494,6 +527,45 @@ fn inline_markdown_to_typst(text: &str) -> String {
         rest = &rest[ch.len_utf8()..];
     }
     out
+}
+
+fn latex_math_to_typst(math: &str) -> String {
+    let mut converted = convert_latex_frac(math);
+    for name in ["sin", "cos", "tan", "log", "ln", "sqrt"] {
+        converted = converted.replace(&format!("\\{name}{{"), &format!("{name}("));
+    }
+    converted = converted.replace('}', ")");
+    converted.replace('\\', "")
+}
+
+fn convert_latex_frac(input: &str) -> String {
+    let mut output = String::new();
+    let mut rest = input;
+    while let Some(start) = rest.find("\\frac{") {
+        output.push_str(&rest[..start]);
+        let after = &rest[start + "\\frac".len()..];
+        if let Some((numerator, after_numerator)) = take_braced(after) {
+            if let Some((denominator, after_denominator)) = take_braced(after_numerator) {
+                output.push_str("frac(");
+                output.push_str(numerator.trim());
+                output.push_str(", ");
+                output.push_str(denominator.trim());
+                output.push(')');
+                rest = after_denominator;
+                continue;
+            }
+        }
+        output.push_str("\\frac");
+        rest = after;
+    }
+    output.push_str(rest);
+    output
+}
+
+fn take_braced(input: &str) -> Option<(&str, &str)> {
+    let input = input.strip_prefix('{')?;
+    let end = input.find('}')?;
+    Some((&input[..end], &input[end + 1..]))
 }
 
 fn escape_typst_text(text: &str) -> String {
@@ -642,6 +714,32 @@ mod tests {
         assert!(typst.contains("#line(length: 100%"));
         assert!(typst.ends_with("```\n"));
         assert_eq!(diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn markdown_converter_keeps_inline_emphasis_and_math_semantics() {
+        let (typst, diagnostics) = markdown_to_typst(
+            "Use **Markdown**, *italic*, `code`, and $ \\frac{1}{2} + \\sin{2} $.",
+        );
+
+        assert!(typst.contains("#strong[Markdown]"));
+        assert!(typst.contains("#emph[italic]"));
+        assert!(typst.contains("#raw(\"code\")"));
+        assert!(typst.contains("$frac(1, 2) + sin(2)$"));
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn markdown_inline_semantics_render_with_typst() {
+        let output = render_memo(RenderMemoInput {
+            body: "Use **Markdown**, *italic*, and $ \\frac{1}{2} + \\sin{2} $.".to_string(),
+            format: RenderFormat::Markdown,
+            template: RenderTemplate::Literary,
+        })
+        .unwrap();
+
+        assert!(svg_has_text_geometry(&output.svg));
+        assert!(output.svg.matches("<use").count() > 15);
     }
 
     #[test]

@@ -1251,7 +1251,7 @@ function WorkbenchApp() {
               <Check size={17} />
               {selectedMemos.length === visibleMemos.length && visibleMemos.length ? "Clear" : "Select"}
             </button>
-            <button className="secondary" onClick={() => captureRepoId && handleClipboardCapture(captureRepoId)}>
+            <button className="secondary clipboard-action" onClick={() => captureRepoId && handleClipboardCapture(captureRepoId)}>
               <Clipboard size={17} />
               Clipboard
             </button>

@@ -186,11 +186,11 @@ button:disabled {
 .workspace {
   height: calc(100vh - 42px);
   display: grid;
-  grid-template-columns: clamp(226px, 13.5vw, 260px) clamp(330px, 23vw, 420px) minmax(680px, 1fr);
+  grid-template-columns: clamp(210px, 13vw, 248px) clamp(320px, 22vw, 404px) minmax(660px, 1fr);
 }
 
 .sidebar-collapsed .workspace {
-  grid-template-columns: 58px clamp(330px, 23vw, 420px) minmax(680px, 1fr);
+  grid-template-columns: 56px clamp(320px, 22vw, 404px) minmax(660px, 1fr);
 }
 
 .sidebar,
@@ -201,7 +201,7 @@ button:disabled {
 }
 
 .sidebar {
-  padding: 18px 14px;
+  padding: 16px 12px;
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
@@ -223,8 +223,8 @@ button:disabled {
 
 .list-actions {
   display: grid;
-  grid-template-columns: minmax(116px, 1.05fr) minmax(88px, 0.72fr) minmax(112px, 0.95fr);
-  gap: 8px;
+  grid-template-columns: minmax(0, 1.1fr) minmax(82px, 0.9fr);
+  gap: 7px;
 }
 
 .sidebar-actions {
@@ -254,7 +254,7 @@ h2 {
 
 h1 {
   font-family: var(--font-serif);
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 720;
 }
 
@@ -271,8 +271,8 @@ h2 {
   display: grid;
   grid-template-columns: 14px 1fr auto;
   align-items: center;
-  gap: 10px;
-  padding: 0 10px;
+  gap: 8px;
+  padding: 0 9px;
   background: transparent;
   color: #3f3932;
   text-align: left;
@@ -425,14 +425,24 @@ textarea:focus {
 .secondary {
   min-height: 34px;
   border-radius: 8px;
-  padding: 0 11px;
+  padding: 0 10px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 7px;
   font-weight: 740;
-  font-size: 14px;
+  font-size: 13px;
   white-space: nowrap;
+}
+
+.list-actions button {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.list-actions .clipboard-action {
+  grid-column: 1 / -1;
 }
 
 .primary {
@@ -456,7 +466,7 @@ textarea:focus {
 }
 
 .list-pane {
-  padding: 18px 14px;
+  padding: 18px 12px;
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
@@ -553,10 +563,10 @@ textarea:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 3px;
   border-radius: 7px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 720;
   transition: color 140ms ease, background 140ms ease, box-shadow 140ms ease, transform 140ms ease;
 }
@@ -582,7 +592,7 @@ textarea:focus {
   min-height: 32px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px;
+  gap: 5px;
 }
 
 .list-tuning select,
