@@ -11,7 +11,7 @@ use typst::foundations::{Dict, IntoValue};
 use typst::layout::{Abs, PagedDocument};
 use typst_as_lib::{typst_kit_options::TypstKitFontOptions, TypstEngine, TypstTemplateMainFile};
 
-const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v12";
+const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v13";
 const RENDER_MAIN_TEMPLATE: &str = r#"#import sys: inputs
 #eval(inputs.source, mode: "markup")
 "#;
@@ -312,8 +312,8 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
   fill: rgb("#1f261f"),
   radius: 4pt,
   inset: 6.8pt,
-  above: 0.34em,
-  below: 0.26em,
+  above: 0.56em,
+  below: 0.52em,
   width: 100%,
   text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 8.9pt, fill: rgb("#eaf1e4"), it)
 )
@@ -344,8 +344,8 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
   fill: rgb("#20261f"),
   radius: 4pt,
   inset: 6pt,
-  above: 0.22em,
-  below: 0.14em,
+  above: 0.46em,
+  below: 0.4em,
   width: 100%,
   text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 8.75pt, fill: rgb("#eaf1e4"), it)
 )
@@ -376,8 +376,8 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
   fill: rgb("#151d19"),
   radius: 4pt,
   inset: 6.6pt,
-  above: 0.24em,
-  below: 0.16em,
+  above: 0.48em,
+  below: 0.42em,
   width: 100%,
   text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9.1pt, fill: rgb("#dfece2"), it)
 )
@@ -408,8 +408,8 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
   fill: rgb("#211d19"),
   radius: 5pt,
   inset: 7pt,
-  above: 0.28em,
-  below: 0.18em,
+  above: 0.56em,
+  below: 0.52em,
   width: 100%,
   text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 9pt, fill: rgb("#f6efe4"), it)
 )
@@ -440,8 +440,8 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
   fill: rgb("#1d2722"),
   radius: 4pt,
   inset: 6pt,
-  above: 0.22em,
-  below: 0.14em,
+  above: 0.48em,
+  below: 0.42em,
   width: 100%,
   text(font: ("JetBrains Mono", "Cascadia Code", "Noto Sans Mono CJK SC", "DejaVu Sans Mono"), size: 8.6pt, fill: rgb("#e9f2ea"), it)
 )
@@ -490,6 +490,7 @@ fn markdown_to_typst(markdown: &str) -> (String, Vec<String>) {
                 Tag::BlockQuote(_) => out.push_str("#quote(block: true)["),
                 Tag::CodeBlock(kind) => {
                     code_block = true;
+                    out.push_str("#v(0.22em)\n");
                     out.push_str("```");
                     if let CodeBlockKind::Fenced(language) = kind {
                         out.push_str(language.trim());
@@ -548,7 +549,7 @@ fn markdown_to_typst(markdown: &str) -> (String, Vec<String>) {
                 TagEnd::BlockQuote(_) => out.push_str("]\n\n"),
                 TagEnd::CodeBlock => {
                     code_block = false;
-                    out.push_str("```\n\n");
+                    out.push_str("```\n#v(0.72em)\n\n");
                 }
                 TagEnd::List(_) => {
                     list_stack.pop();
@@ -606,13 +607,7 @@ fn markdown_to_typst(markdown: &str) -> (String, Vec<String>) {
                 out.push_str(&escape_typst_text(&label));
                 out.push(']');
             }
-            Event::SoftBreak => {
-                if code_block || table_depth > 0 {
-                    out.push('\n');
-                } else {
-                    out.push(' ');
-                }
-            }
+            Event::SoftBreak => out.push_str("\\\n"),
             Event::HardBreak => out.push_str("\\\n"),
             Event::Rule => {
                 out.push_str("#line(length: 100%, stroke: 0.7pt + rgb(\"#d5cab8\"))\n\n")
@@ -644,8 +639,9 @@ fn has_unclosed_markdown_fence(markdown: &str) -> bool {
 }
 
 fn normalize_markdown_math(markdown: &str) -> String {
+    let markdown = promote_standalone_math_lines(markdown);
     let mut output = String::with_capacity(markdown.len());
-    let mut rest = markdown;
+    let mut rest = markdown.as_str();
     while let Some(start) = rest.find('$') {
         output.push_str(&rest[..start]);
         if let Some(after_open) = rest[start..].strip_prefix("$$") {
@@ -673,6 +669,30 @@ fn normalize_markdown_math(markdown: &str) -> String {
     output
 }
 
+fn promote_standalone_math_lines(markdown: &str) -> String {
+    let mut output = String::with_capacity(markdown.len());
+    for line in markdown.lines() {
+        let trimmed = line.trim();
+        if trimmed.len() > 2
+            && trimmed.starts_with('$')
+            && trimmed.ends_with('$')
+            && !trimmed.starts_with("$$")
+            && !trimmed.ends_with("$$")
+        {
+            output.push_str("$$");
+            output.push_str(trimmed.trim_matches('$').trim());
+            output.push_str("$$\n");
+        } else {
+            output.push_str(line);
+            output.push('\n');
+        }
+    }
+    if !markdown.ends_with('\n') {
+        output.pop();
+    }
+    output
+}
+
 fn heading_level_number(level: HeadingLevel) -> usize {
     match level {
         HeadingLevel::H1 => 1,
@@ -686,7 +706,7 @@ fn heading_level_number(level: HeadingLevel) -> usize {
 
 fn push_typst_math(out: &mut String, math: &str, display: bool) {
     if display {
-        out.push_str("#block(above: 0.22em, below: 0.16em)[$");
+        out.push_str("#block(above: 0.36em, below: 0.28em)[$");
         out.push_str(&latex_math_to_typst(math.trim()));
         out.push_str("$]\n\n");
     } else {
@@ -880,7 +900,7 @@ mod tests {
         assert!(typst.contains("== 1.测试"));
         assert!(typst.contains("=== 测试"));
         assert!(typst.contains("#line(length: 100%"));
-        assert!(typst.contains("```rust"));
+        assert!(typst.contains("#v(0.22em)\n```rust"));
         assert!(typst.contains("println!(\"Hello World!\");"));
         assert_eq!(diagnostics.len(), 1);
     }
@@ -909,6 +929,22 @@ mod tests {
         assert!(typst.contains("#strike[old]"));
         assert!(typst.contains("+ first"));
         assert!(typst.contains("+ second"));
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn markdown_converter_preserves_visible_soft_breaks() {
+        let (typst, diagnostics) = markdown_to_typst("first line\n*second line*");
+
+        assert!(typst.contains("first line\\\n#emph[second line]"));
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn markdown_converter_promotes_standalone_math() {
+        let (typst, diagnostics) = markdown_to_typst("$ \\frac{1}{2} + \\sin{2} $");
+
+        assert!(typst.contains("#block(above: 0.36em, below: 0.28em)[$frac(1, 2) + sin(2)$]"));
         assert!(diagnostics.is_empty());
     }
 

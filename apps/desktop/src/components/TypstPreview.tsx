@@ -6,7 +6,7 @@ import type { PreviewRenderPath, RenderFormat, RenderPageAssetOutput, RenderTemp
 const MarkdownView = lazy(() => import("../MarkdownView"));
 const PREVIEW_CACHE_MAX_ENTRIES = 18;
 const PREVIEW_CACHE_MAX_BYTES = 12 * 1024 * 1024;
-const PREVIEW_CACHE_VERSION = "typst-page-svg-v12";
+const PREVIEW_CACHE_VERSION = "typst-page-svg-v13";
 
 type RenderState =
   | { kind: "idle" | "loading" | "markdown" }
