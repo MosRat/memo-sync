@@ -303,6 +303,10 @@ button:disabled {
   grid-template-columns: clamp(210px, 13vw, 248px) clamp(306px, 22vw, 404px) minmax(0, 1fr);
 }
 
+.mobile-panel-switcher {
+  display: none;
+}
+
 .sidebar-collapsed .workspace {
   grid-template-columns: 56px clamp(306px, 22vw, 404px) minmax(0, 1fr);
 }
@@ -2883,7 +2887,60 @@ textarea:focus {
 
   .shell {
     padding-top: env(safe-area-inset-top, 0);
-    padding-bottom: env(safe-area-inset-bottom, 0);
+    padding-bottom: calc(64px + env(safe-area-inset-bottom, 0));
+  }
+
+  .mobile-panel-switcher {
+    position: fixed;
+    left: max(10px, env(safe-area-inset-left, 0));
+    right: max(10px, env(safe-area-inset-right, 0));
+    bottom: max(10px, env(safe-area-inset-bottom, 0));
+    z-index: 60;
+    min-height: 50px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 5px;
+    padding: 5px;
+    border: 1px solid color-mix(in srgb, var(--line) 88%, rgba(255, 255, 255, 0.28));
+    border-radius: 12px;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--surface-strong) 92%, transparent), color-mix(in srgb, var(--surface) 90%, transparent)),
+      var(--paper);
+    backdrop-filter: var(--glass-blur);
+    box-shadow:
+      inset 0 1px 0 var(--glass-line),
+      0 18px 44px rgba(39, 33, 27, 0.18);
+  }
+
+  .mobile-panel-switcher button {
+    min-width: 0;
+    min-height: 40px;
+    border-radius: 9px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    color: var(--muted);
+    background: transparent;
+    font-size: 12px;
+    font-weight: 760;
+  }
+
+  .mobile-panel-switcher button.active {
+    color: color-mix(in srgb, var(--accent) 72%, var(--ink));
+    background: var(--surface-strong);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--accent) 14%, rgba(42, 52, 60, 0.08)),
+      0 8px 18px rgba(39, 33, 27, 0.1);
+  }
+
+  .mobile-panel-library .list-pane,
+  .mobile-panel-library .editor-pane,
+  .mobile-panel-memos .sidebar,
+  .mobile-panel-memos .editor-pane,
+  .mobile-panel-write .sidebar,
+  .mobile-panel-write .list-pane {
+    display: none;
   }
 
   .titlebar {
@@ -2918,26 +2975,32 @@ textarea:focus {
   .workspace,
   .sidebar-collapsed .workspace {
     height: auto;
-    min-height: calc(100vh - 44px - env(safe-area-inset-top, 0) - env(safe-area-inset-bottom, 0));
-    min-height: calc(100dvh - 44px - env(safe-area-inset-top, 0) - env(safe-area-inset-bottom, 0));
+    min-height: calc(100vh - 64px - env(safe-area-inset-top, 0) - env(safe-area-inset-bottom, 0));
+    min-height: calc(100dvh - 64px - env(safe-area-inset-top, 0) - env(safe-area-inset-bottom, 0));
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .desktop-shell .workspace,
+  .desktop-shell.sidebar-collapsed .workspace {
+    min-height: calc(100vh - 44px - 64px - env(safe-area-inset-top, 0) - env(safe-area-inset-bottom, 0));
+    min-height: calc(100dvh - 44px - 64px - env(safe-area-inset-top, 0) - env(safe-area-inset-bottom, 0));
   }
 
   .sidebar,
   .sidebar-collapsed .sidebar {
-    position: sticky;
-    top: env(safe-area-inset-top, 0);
+    position: relative;
+    top: auto;
     z-index: 18;
-    min-height: 70px;
+    min-height: calc(100dvh - 64px - env(safe-area-inset-top, 0) - env(safe-area-inset-bottom, 0));
     padding:
       10px max(10px, env(safe-area-inset-right, 0))
       10px max(10px, env(safe-area-inset-left, 0));
     border-right: 0;
-    border-bottom: 1px solid var(--line);
-    flex-direction: row;
-    align-items: center;
-    overflow-x: auto;
-    scrollbar-width: none;
+    border-bottom: 0;
+    flex-direction: column;
+    align-items: stretch;
+    overflow: auto;
+    scrollbar-width: thin;
     box-shadow:
       inset 0 1px 0 var(--glass-line),
       0 14px 30px rgba(39, 33, 27, 0.08);
@@ -2945,10 +3008,9 @@ textarea:focus {
 
   .desktop-shell .sidebar,
   .desktop-shell.sidebar-collapsed .sidebar {
-    top: calc(44px + env(safe-area-inset-top, 0));
+    top: auto;
   }
 
-  .sidebar::-webkit-scrollbar,
   .toolbar::-webkit-scrollbar,
   .writebar::-webkit-scrollbar,
   .outline-strip::-webkit-scrollbar {
@@ -2959,12 +3021,12 @@ textarea:focus {
   .sidebar-collapsed .sidebar-top {
     flex: 0 0 auto;
     flex-direction: row;
+    justify-content: space-between;
   }
 
   .sidebar h1,
-  .sidebar .eyebrow,
-  .sidebar-collapsed .sidebar-top > div {
-    display: none;
+  .sidebar .eyebrow {
+    display: block;
   }
 
   .sidebar-actions,
@@ -2974,36 +3036,44 @@ textarea:focus {
 
   .repo,
   .sidebar-collapsed .repo {
-    flex: 0 0 44px;
-    width: 44px;
-    min-height: 44px;
-    padding: 0;
-    display: inline-flex;
+    flex: 0 0 auto;
+    width: 100%;
+    min-height: 42px;
+    padding: 0 10px;
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr) auto;
     align-items: center;
-    justify-content: center;
+    justify-content: stretch;
     border-radius: 9px;
   }
 
   .repo span:not(.repo-dot),
   .repo small,
-  .repo strong,
+  .repo strong {
+    display: inline;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .tag-panel,
   .sync-panel,
   .web-footer {
-    display: none;
+    display: grid;
   }
 
   .repo-dot {
-    width: 14px;
-    height: 14px;
+    width: 11px;
+    height: 11px;
   }
 
   .list-pane {
-    min-height: 0;
-    max-height: min(44vh, 420px);
+    min-height: calc(100dvh - 64px - env(safe-area-inset-top, 0) - env(safe-area-inset-bottom, 0));
+    max-height: none;
     overflow: hidden;
     border-right: 0;
-    border-bottom: 1px solid var(--line);
+    border-bottom: 0;
     box-shadow:
       inset 0 1px 0 var(--glass-line),
       0 12px 28px rgba(39, 33, 27, 0.06);
@@ -3028,9 +3098,9 @@ textarea:focus {
   }
 
   .editor-pane {
-    min-height: max(560px, calc(100vh - 112px));
-    min-height: max(560px, calc(100dvh - 112px));
-    padding: 16px 14px 20px;
+    min-height: calc(100vh - 64px - env(safe-area-inset-top, 0) - env(safe-area-inset-bottom, 0));
+    min-height: calc(100dvh - 64px - env(safe-area-inset-top, 0) - env(safe-area-inset-bottom, 0));
+    padding: 16px 14px 12px;
   }
 
   .editor-header {
@@ -3106,7 +3176,7 @@ textarea:focus {
 
   .editor-grid.edit textarea,
   .editor-grid.preview .markdown {
-    min-height: calc(100dvh - 282px - env(safe-area-inset-top, 0) - env(safe-area-inset-bottom, 0));
+    min-height: max(300px, calc(100dvh - 290px - 64px - env(safe-area-inset-top, 0) - env(safe-area-inset-bottom, 0)));
   }
 
   .editor-grid textarea {
@@ -3226,7 +3296,8 @@ textarea:focus {
   }
 
   .list-pane {
-    max-height: min(38vh, 360px);
+    min-height: calc(100dvh - 64px - env(safe-area-inset-top, 0) - env(safe-area-inset-bottom, 0));
+    max-height: none;
     padding: 12px 10px;
   }
 
@@ -3458,12 +3529,15 @@ textarea:focus {
 
   .sidebar,
   .sidebar-collapsed .sidebar {
-    min-height: 62px;
-    padding: 8px;
+    min-height: calc(100dvh - 64px - env(safe-area-inset-top, 0) - env(safe-area-inset-bottom, 0));
+    padding:
+      10px max(10px, env(safe-area-inset-right, 0))
+      10px max(10px, env(safe-area-inset-left, 0));
   }
 
   .list-pane {
-    max-height: 36vh;
+    min-height: calc(100dvh - 64px - env(safe-area-inset-top, 0) - env(safe-area-inset-bottom, 0));
+    max-height: none;
     padding: 12px 9px;
   }
 
@@ -3531,7 +3605,7 @@ textarea:focus {
 
   .editor-grid.edit textarea,
   .editor-grid.preview .markdown {
-    min-height: calc(100dvh - 258px - env(safe-area-inset-top, 0) - env(safe-area-inset-bottom, 0));
+    min-height: max(300px, calc(100dvh - 258px - 64px - env(safe-area-inset-top, 0) - env(safe-area-inset-bottom, 0)));
   }
 
   .shortcut-recorder {
@@ -3554,14 +3628,14 @@ textarea:focus {
 
   .sidebar,
   .sidebar-collapsed .sidebar {
-    min-height: 58px;
+    min-height: calc(100dvh - 64px - env(safe-area-inset-top, 0) - env(safe-area-inset-bottom, 0));
     padding-block: 7px;
   }
 
   .repo,
   .sidebar-collapsed .repo {
-    flex-basis: 40px;
-    width: 40px;
+    flex-basis: auto;
+    width: 100%;
     min-height: 40px;
   }
 
@@ -3571,7 +3645,7 @@ textarea:focus {
   }
 
   .list-pane {
-    max-height: 34vh;
+    max-height: none;
   }
 
   .title-input {

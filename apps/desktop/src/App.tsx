@@ -97,6 +97,7 @@ type ViewFilter = "active" | "pinned" | "archived" | "clipboard" | "quick";
 type SortMode = "updated-desc" | "created-desc" | "title-asc" | "size-desc";
 type ListDensity = "comfortable" | "compact";
 type Appearance = "studio" | "grove" | "dusk";
+type MobilePanel = "library" | "memos" | "write";
 
 const viewFilters: Array<{ id: ViewFilter; label: string; icon: typeof FileText }> = [
   { id: "active", label: "Inbox", icon: FileText },
@@ -192,6 +193,7 @@ function WorkbenchApp() {
   const [sortMode, setSortMode] = useState<SortMode>(() => (localStorage.getItem("memo-sort-mode") as SortMode | null) ?? "updated-desc");
   const [listDensity, setListDensity] = useState<ListDensity>(() => (localStorage.getItem("memo-list-density") as ListDensity | null) ?? "comfortable");
   const [appearance, setAppearance] = useState<Appearance>(() => (localStorage.getItem("memo-appearance") as Appearance | null) ?? "studio");
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>("memos");
   const [attachmentDropActive, setAttachmentDropActive] = useState(false);
   const quickRepoRef = useRef("");
   const repositoriesRef = useRef<Repository[]>([]);
@@ -999,6 +1001,7 @@ function WorkbenchApp() {
     setAllTags((items) => [...new Set([...items, ...saved.tags])].sort());
     setActiveMemoId(saved.id);
     setMode("edit");
+    setMobilePanel("write");
     notify("success", "Memo created", activeRepo === "all" ? undefined : activeRepository?.name);
   }
 
@@ -1257,7 +1260,7 @@ function WorkbenchApp() {
   }
 
   return (
-    <main className={`shell theme-${appearance} ${shellKind} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+    <main className={`shell theme-${appearance} ${shellKind} mobile-panel-${mobilePanel} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       {isDesktopApp && (
         <Titlebar
           onQuick={openQuickCapture}
@@ -1268,6 +1271,20 @@ function WorkbenchApp() {
           sidebarCollapsed={sidebarCollapsed}
         />
       )}
+      <nav className="mobile-panel-switcher" aria-label="Mobile workspace sections">
+        <button className={mobilePanel === "library" ? "active" : ""} onClick={() => setMobilePanel("library")} aria-pressed={mobilePanel === "library"}>
+          <PanelLeft size={17} />
+          <span>Library</span>
+        </button>
+        <button className={mobilePanel === "memos" ? "active" : ""} onClick={() => setMobilePanel("memos")} aria-pressed={mobilePanel === "memos"}>
+          <Search size={17} />
+          <span>Memos</span>
+        </button>
+        <button className={mobilePanel === "write" ? "active" : ""} onClick={() => setMobilePanel("write")} aria-pressed={mobilePanel === "write"}>
+          <FileText size={17} />
+          <span>Write</span>
+        </button>
+      </nav>
       <section className="workspace">
         <aside className="sidebar">
           <div className="sidebar-top">
@@ -1298,7 +1315,14 @@ function WorkbenchApp() {
             </div>
           </div>
 
-          <button className={activeRepo === "all" ? "repo active" : "repo"} title="All notes" onClick={() => setActiveRepo("all")}>
+          <button
+            className={activeRepo === "all" ? "repo active" : "repo"}
+            title="All notes"
+            onClick={() => {
+              setActiveRepo("all");
+              setMobilePanel("memos");
+            }}
+          >
             <span className="repo-dot all" />
             <span>All notes</span>
             <strong>{localStats.memo_count}</strong>
@@ -1309,7 +1333,10 @@ function WorkbenchApp() {
               key={repo.id}
               className={activeRepo === repo.id ? "repo active" : "repo"}
               title={`${repo.name} (${repo.kind === "Temporary" ? "temporary" : "sync"})`}
-              onClick={() => setActiveRepo(repo.id)}
+              onClick={() => {
+                setActiveRepo(repo.id);
+                setMobilePanel("memos");
+              }}
             >
               <span className="repo-dot" style={{ background: repo.color }} />
               <span>{repo.name}</span>
@@ -1546,6 +1573,7 @@ function WorkbenchApp() {
             onSelect={(id) => {
               void flushPendingSave();
               setActiveMemoId(id);
+              setMobilePanel("write");
             }}
             onToggleSelected={toggleMemoSelected}
           />
