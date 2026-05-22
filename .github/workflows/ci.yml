@@ -77,7 +77,8 @@ jobs:
       - name: Show Rust remote compile cache stats
         if: always()
         shell: bash
-        run: "${SCCACHE_PATH}" --show-stats
+        run: |
+          "${SCCACHE_PATH}" --show-stats
 
   android-build:
     name: Android AArch64 Build
@@ -154,4 +155,5 @@ jobs:
       - name: Show Rust remote compile cache stats
         if: always()
         shell: bash
-        run: "${SCCACHE_PATH}" --show-stats
+        run: |
+          "${SCCACHE_PATH}" --show-stats

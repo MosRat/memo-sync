@@ -74,7 +74,8 @@ jobs:
       - name: Show Rust remote compile cache stats
         if: always()
         shell: bash
-        run: "${SCCACHE_PATH}" --show-stats
+        run: |
+          "${SCCACHE_PATH}" --show-stats
 
   android-apk:
     name: Android APK
@@ -151,7 +152,8 @@ jobs:
       - name: Show Rust remote compile cache stats
         if: always()
         shell: bash
-        run: "${SCCACHE_PATH}" --show-stats
+        run: |
+          "${SCCACHE_PATH}" --show-stats
 
   github-release:
     name: Publish GitHub Release
