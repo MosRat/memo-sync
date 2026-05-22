@@ -54,16 +54,16 @@ Temporary repositories are local scratch spaces: their memos are purged on next 
 
 ## CI and Release
 
-GitHub Actions validates the workspace on every push and pull request to `main`:
+GitHub Actions runs a fast validation pass on every push and pull request to `main`:
 
 ```powershell
-cargo test --workspace
-cargo test -p memo-render --no-default-features
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --no-deps -- -D warnings
+cargo clippy -p memo-render --no-default-features --all-targets --no-deps -- -D warnings
 pnpm --dir apps/desktop test
-pnpm --dir apps/desktop build
 ```
 
-The Android CI job also builds an aarch64 release APK with the lightweight mobile renderer profile.
+Run the `CI` workflow manually with the `full` profile when you need full Rust tests, the production frontend build, and an aarch64 Android APK with the lightweight mobile renderer profile.
 
 Create a prerelease from the Actions UI by running the `Release` workflow with a tag such as `v0.1.0`. Pushing a `v*` tag also triggers the same workflow:
 
