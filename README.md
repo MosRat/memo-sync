@@ -1,5 +1,8 @@
 # Memo Sync
 
+[![CI](https://github.com/MosRat/memo-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/MosRat/memo-sync/actions/workflows/ci.yml)
+[![Release](https://github.com/MosRat/memo-sync/actions/workflows/release.yml/badge.svg)](https://github.com/MosRat/memo-sync/actions/workflows/release.yml)
+
 Memo Sync is a Tauri 2 multi-platform memo tool with a React web client and a Rust sync server.
 
 ## Shape
@@ -48,3 +51,25 @@ wsl.exe -d Ubuntu -- bash -lc "cd /mnt/f/WorkSpace/Rust/memo-sync && cargo run -
 Use `cargo zigbuild` for the deployable musl artifact and WSL for Linux runtime behavior checks.
 
 Temporary repositories are local scratch spaces: their memos are purged on next app startup and never enter the outgoing sync log.
+
+## CI and Release
+
+GitHub Actions validates the workspace on every push and pull request to `main`:
+
+```powershell
+cargo test --workspace
+cargo test -p memo-render --no-default-features
+pnpm --dir apps/desktop test
+pnpm --dir apps/desktop build
+```
+
+The Android CI job also builds an aarch64 release APK with the lightweight mobile renderer profile.
+
+Create a prerelease from the Actions UI by running the `Release` workflow with a tag such as `v0.1.0`. Pushing a `v*` tag also triggers the same workflow:
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Release artifacts include Windows installer packages, an unsigned Android APK, and `SHA256SUMS.txt`.

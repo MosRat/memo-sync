@@ -14,6 +14,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -54,6 +57,7 @@ jobs:
           name: memo-sync-windows
           path: target/release/bundle/**
           if-no-files-found: error
+          retention-days: 30
 
   android-apk:
     name: Android APK
@@ -111,6 +115,7 @@ jobs:
           name: memo-sync-android
           path: apps/desktop/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
+          retention-days: 30
 
   github-release:
     name: Publish GitHub Release
@@ -123,11 +128,21 @@ jobs:
         with:
           path: release-artifacts
 
+      - name: Generate checksums
+        shell: bash
+        run: |
+          find release-artifacts -type f -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            | sed 's# release-artifacts/[^/]*/# #' \
+            > release-artifacts/SHA256SUMS.txt
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           name: Memo Sync ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
           draft: false
           prerelease: true
           files: release-artifacts/**
