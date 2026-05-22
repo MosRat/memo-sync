@@ -16,6 +16,9 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CARGO_INCREMENTAL: "0"
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
 
 concurrency:
   group: release-${{ github.ref }}
@@ -32,6 +35,9 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust remote compile cache
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Cache Rust builds
         uses: Swatinem/rust-cache@v2
@@ -65,6 +71,11 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Show Rust remote compile cache stats
+        if: always()
+        shell: bash
+        run: "${SCCACHE_PATH}" --show-stats
+
   android-apk:
     name: Android APK
     runs-on: ubuntu-latest
@@ -77,6 +88,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
+
+      - name: Setup Rust remote compile cache
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Cache Rust builds
         uses: Swatinem/rust-cache@v2
@@ -103,15 +117,10 @@ jobs:
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v6
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('apps/desktop/src-tauri/gen/android/**/*.gradle*', 'apps/desktop/src-tauri/gen/android/**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+          cache-provider: basic
 
       - name: Install Android packages
         shell: bash
@@ -138,6 +147,11 @@ jobs:
           path: apps/desktop/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Show Rust remote compile cache stats
+        if: always()
+        shell: bash
+        run: "${SCCACHE_PATH}" --show-stats
 
   github-release:
     name: Publish GitHub Release
