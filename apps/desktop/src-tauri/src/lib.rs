@@ -670,11 +670,7 @@ fn preview_path(path: &str) -> Option<PreviewPath<'_>> {
 }
 
 fn is_preview_cache_key(key: &str) -> bool {
-    if key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        true
-    } else {
-        false
-    }
+    key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn preview_protocol_response(app: &tauri::AppHandle, path: &str) -> tauri::http::Response<Vec<u8>> {

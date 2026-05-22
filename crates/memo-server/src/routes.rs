@@ -602,7 +602,11 @@ async fn relay_inline_attachment_blob(
         },
         data_base64: attachment.data_base64.clone(),
     };
-    validation::validate_blob_payloads(&[payload.clone()], 1, "inline attachment relay")?;
+    validation::validate_blob_payloads(
+        std::slice::from_ref(&payload),
+        1,
+        "inline attachment relay",
+    )?;
     store_relay_blobs(
         state,
         device_id,
