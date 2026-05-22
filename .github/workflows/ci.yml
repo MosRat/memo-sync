@@ -5,6 +5,16 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Validation depth"
+        required: true
+        default: full
+        type: choice
+        options:
+          - fast
+          - full
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -17,8 +27,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  desktop-and-tests:
-    name: Desktop, Frontend, and Rust Tests
+  fast-checks:
+    name: Lint and Fast Checks
     runs-on: windows-latest
 
     steps:
@@ -57,19 +67,61 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Rust clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --no-deps -- -D warnings
 
       - name: Run lightweight renderer clippy
-        run: cargo clippy -p memo-render --no-default-features --all-targets -- -D warnings
+        run: cargo clippy -p memo-render --no-default-features --all-targets --no-deps -- -D warnings
+
+      - name: Run frontend tests
+        run: pnpm --dir apps/desktop test
+
+      - name: Show Rust remote compile cache stats
+        if: always()
+        shell: bash
+        run: |
+          "${SCCACHE_PATH}" --show-stats
+
+  full-desktop-and-tests:
+    name: Full Desktop, Frontend, and Rust Tests
+    runs-on: windows-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.profile == 'full' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust remote compile cache
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: windows-full
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: pnpm --dir apps/desktop install --frozen-lockfile
 
       - name: Run Rust workspace tests
         run: cargo test --workspace
 
       - name: Run lightweight renderer tests
         run: cargo test -p memo-render --no-default-features
-
-      - name: Run frontend tests
-        run: pnpm --dir apps/desktop test
 
       - name: Build frontend
         run: pnpm --dir apps/desktop build
@@ -83,6 +135,7 @@ jobs:
   android-build:
     name: Android AArch64 Build
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.profile == 'full' }}
 
     steps:
       - name: Checkout
