@@ -1,5 +1,7 @@
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
@@ -172,6 +174,94 @@ pub struct MemoMeta {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoAttachment {
+    pub id: Uuid,
+    pub memo_id: Uuid,
+    pub repository_id: Uuid,
+    pub file_name: String,
+    pub media_type: String,
+    pub byte_len: usize,
+    #[serde(default)]
+    pub content_sha256: String,
+    pub data_base64: String,
+    pub deleted: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl MemoAttachment {
+    pub fn new(
+        memo_id: Uuid,
+        repository_id: Uuid,
+        file_name: impl Into<String>,
+        media_type: impl Into<String>,
+        byte_len: usize,
+        data_base64: impl Into<String>,
+    ) -> Self {
+        let now = Utc::now();
+        let data_base64 = data_base64.into();
+        Self {
+            id: Uuid::now_v7(),
+            memo_id,
+            repository_id,
+            file_name: file_name.into(),
+            media_type: media_type.into(),
+            byte_len,
+            content_sha256: attachment_content_sha256(&data_base64),
+            data_base64,
+            deleted: false,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoAttachmentMeta {
+    pub id: Uuid,
+    pub memo_id: Uuid,
+    pub repository_id: Uuid,
+    pub file_name: String,
+    pub media_type: String,
+    pub byte_len: usize,
+    #[serde(default)]
+    pub content_sha256: String,
+    pub deleted: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl From<&MemoAttachment> for MemoAttachmentMeta {
+    fn from(value: &MemoAttachment) -> Self {
+        Self {
+            id: value.id,
+            memo_id: value.memo_id,
+            repository_id: value.repository_id,
+            file_name: value.file_name.clone(),
+            media_type: value.media_type.clone(),
+            byte_len: value.byte_len,
+            content_sha256: value.content_sha256.clone(),
+            deleted: value.deleted,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        }
+    }
+}
+
+pub fn attachment_content_sha256(data_base64: &str) -> String {
+    match BASE64_STANDARD.decode(data_base64.as_bytes()) {
+        Ok(bytes) => sha256_hex(&bytes),
+        Err(_) => sha256_hex(data_base64.as_bytes()),
+    }
+}
+
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoPatch {
     pub title: Option<String>,
     pub body_md: Option<String>,
@@ -187,6 +277,7 @@ pub struct MemoPatch {
 pub enum SyncOperationKind {
     UpsertRepository(Repository),
     UpsertMemo(Memo),
+    UpsertAttachment(MemoAttachment),
     PatchMemo {
         repository_id: Uuid,
         memo_id: Uuid,
@@ -195,6 +286,10 @@ pub enum SyncOperationKind {
     DeleteMemo {
         repository_id: Uuid,
         memo_id: Uuid,
+    },
+    DeleteAttachment {
+        repository_id: Uuid,
+        attachment_id: Uuid,
     },
 }
 
@@ -217,8 +312,10 @@ impl SyncOperation {
         let repository_id = match &kind {
             SyncOperationKind::UpsertRepository(repo) => Some(repo.id),
             SyncOperationKind::UpsertMemo(memo) => Some(memo.repository_id),
+            SyncOperationKind::UpsertAttachment(attachment) => Some(attachment.repository_id),
             SyncOperationKind::PatchMemo { repository_id, .. }
-            | SyncOperationKind::DeleteMemo { repository_id, .. } => Some(*repository_id),
+            | SyncOperationKind::DeleteMemo { repository_id, .. }
+            | SyncOperationKind::DeleteAttachment { repository_id, .. } => Some(*repository_id),
         };
         Self {
             op_id: Uuid::now_v7(),
@@ -235,6 +332,7 @@ impl SyncOperation {
 pub struct SyncDocument {
     pub repositories: BTreeMap<Uuid, Versioned<Repository>>,
     pub memos: BTreeMap<Uuid, Versioned<Memo>>,
+    pub attachments: BTreeMap<Uuid, Versioned<MemoAttachment>>,
 }
 
 impl SyncDocument {
@@ -245,6 +343,15 @@ impl SyncDocument {
             }
             SyncOperationKind::UpsertMemo(memo) => {
                 merge_versioned(&mut self.memos, memo.id, memo, &op.device_id, op.hlc);
+            }
+            SyncOperationKind::UpsertAttachment(attachment) => {
+                merge_versioned(
+                    &mut self.attachments,
+                    attachment.id,
+                    attachment,
+                    &op.device_id,
+                    op.hlc,
+                );
             }
             SyncOperationKind::PatchMemo { memo_id, patch, .. } => {
                 if let Some(existing) = self.memos.get_mut(&memo_id) {
@@ -257,6 +364,16 @@ impl SyncDocument {
             }
             SyncOperationKind::DeleteMemo { memo_id, .. } => {
                 if let Some(existing) = self.memos.get_mut(&memo_id) {
+                    if wins(existing, &op.device_id, op.hlc) {
+                        existing.value.deleted = true;
+                        existing.value.updated_at = Utc::now();
+                        existing.device_id = op.device_id;
+                        existing.hlc = op.hlc;
+                    }
+                }
+            }
+            SyncOperationKind::DeleteAttachment { attachment_id, .. } => {
+                if let Some(existing) = self.attachments.get_mut(&attachment_id) {
                     if wins(existing, &op.device_id, op.hlc) {
                         existing.value.deleted = true;
                         existing.value.updated_at = Utc::now();
@@ -358,6 +475,8 @@ pub struct PullRequest {
     pub protocol_version: u16,
     pub since_sequence: i64,
     pub repository_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub exclude_device_id: Option<DeviceId>,
     #[serde(default = "default_pull_limit")]
     pub limit: u16,
     #[serde(default)]
@@ -369,7 +488,105 @@ pub struct PullResponse {
     pub protocol_version: u16,
     pub operations: Vec<ServerOperation>,
     pub server_sequence: i64,
+    pub min_available_sequence: i64,
+    #[serde(default)]
+    pub snapshot_required: bool,
     pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotResponse {
+    pub protocol_version: u16,
+    pub server_sequence: i64,
+    pub min_available_sequence: i64,
+    pub repositories: Vec<SnapshotRepository>,
+    pub memos: Vec<SnapshotMemo>,
+    pub attachments: Vec<SnapshotAttachment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotRepository {
+    pub repository: Repository,
+    pub device_id: DeviceId,
+    pub hlc: HybridLogicalClock,
+    pub sequence: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotMemo {
+    pub memo: Memo,
+    pub device_id: DeviceId,
+    pub hlc: HybridLogicalClock,
+    pub sequence: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotAttachment {
+    pub attachment: MemoAttachment,
+    pub device_id: DeviceId,
+    pub hlc: HybridLogicalClock,
+    pub sequence: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachmentBlobDescriptor {
+    pub content_sha256: String,
+    pub media_type: String,
+    pub byte_len: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentBlobManifestRequest {
+    #[serde(default = "default_sync_protocol_version")]
+    pub protocol_version: u16,
+    pub content_sha256: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentBlobManifestResponse {
+    pub protocol_version: u16,
+    pub server_sequence: i64,
+    pub present: Vec<AttachmentBlobDescriptor>,
+    pub missing: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentBlobFetchRequest {
+    #[serde(default = "default_sync_protocol_version")]
+    pub protocol_version: u16,
+    pub content_sha256: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentBlobPayload {
+    pub descriptor: AttachmentBlobDescriptor,
+    pub data_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentBlobFetchResponse {
+    pub protocol_version: u16,
+    pub server_sequence: i64,
+    pub blobs: Vec<AttachmentBlobPayload>,
+    pub missing: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentBlobRelayRequest {
+    #[serde(default = "default_sync_protocol_version")]
+    pub protocol_version: u16,
+    pub device_id: DeviceId,
+    pub blobs: Vec<AttachmentBlobPayload>,
+    #[serde(default)]
+    pub ttl_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentBlobRelayResponse {
+    pub protocol_version: u16,
+    pub server_sequence: i64,
+    pub accepted: usize,
+    pub ttl_secs: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -510,6 +727,8 @@ mod tests {
         let repo = Uuid::now_v7();
         let memo = Memo::new(repo, "Scoped", "");
         let memo_id = memo.id;
+        let attachment = MemoAttachment::new(memo_id, repo, "figure.png", "image/png", 4, "AAAA");
+        let attachment_id = attachment.id;
         let mut doc = SyncDocument::default();
         doc.apply(SyncOperation::new(
             "device-a",
@@ -559,5 +778,32 @@ mod tests {
         assert_eq!(delete_op.repository_id, Some(repo));
         doc.apply(delete_op);
         assert!(doc.memos.get(&memo_id).unwrap().value.deleted);
+
+        let attachment_op = SyncOperation::new(
+            "device-a",
+            HybridLogicalClock {
+                wall_time_ms: 4,
+                counter: 0,
+            },
+            SyncOperationKind::UpsertAttachment(attachment),
+        );
+        assert_eq!(attachment_op.repository_id, Some(repo));
+        doc.apply(attachment_op);
+        assert!(doc.attachments.contains_key(&attachment_id));
+
+        let delete_attachment_op = SyncOperation::new(
+            "device-a",
+            HybridLogicalClock {
+                wall_time_ms: 5,
+                counter: 0,
+            },
+            SyncOperationKind::DeleteAttachment {
+                repository_id: repo,
+                attachment_id,
+            },
+        );
+        assert_eq!(delete_attachment_op.repository_id, Some(repo));
+        doc.apply(delete_attachment_op);
+        assert!(doc.attachments.get(&attachment_id).unwrap().value.deleted);
     }
 }

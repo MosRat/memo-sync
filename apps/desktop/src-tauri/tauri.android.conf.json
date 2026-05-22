@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "app.memosync.mobile",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Memo Sync",
+        "width": 390,
+        "height": 844,
+        "decorations": false,
+        "transparent": false
+      }
+    ]
+  },
+  "bundle": {
+    "icon": ["icons/icon.png"]
+  }
+}

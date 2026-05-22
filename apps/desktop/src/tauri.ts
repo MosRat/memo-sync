@@ -1,10 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { AppSettings, Bootstrap, LocalStats, Memo, MemoFilter, RenderFormat, RenderMemoAssetOutput, RenderMemoOutput, RenderTemplate, Repository, SaveMemoInput, ShortcutCheckResult } from "./types";
+import type { AppSettings, Bootstrap, LocalStats, Memo, MemoAttachment, MemoFilter, RenderFormat, RenderMemoAssetOutput, RenderMemoOutput, RenderTemplate, Repository, SaveAttachmentInput, SaveMemoInput, ShortcutCheckResult } from "./types";
+import { DEFAULT_APP_SETTINGS, withDefaultSettings } from "./defaults";
 
-const isTauri = "__TAURI_INTERNALS__" in window;
-export const isDesktopApp = isTauri;
+const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const userAgent = typeof navigator === "undefined" ? "" : navigator.userAgent;
+export const isNativeApp = isTauri;
+export const isAndroidApp = isTauri && /\bAndroid\b/i.test(userAgent);
+export const isMobileApp = isTauri && /\b(Android|iPhone|iPad|iPod)\b/i.test(userAgent);
+export const isDesktopApp = isTauri && !isMobileApp;
 
 export const APP_EVENTS = {
   openQuickCapture: "open-quick-capture",
@@ -32,19 +37,12 @@ export function currentWindowLabel() {
   }
 }
 
-const defaultSettings: AppSettings = {
-  server_url: "http://127.0.0.1:7373",
-  quick_capture_shortcut: "Ctrl+Shift+KeyM",
-  clipboard_capture_shortcut: "Ctrl+Shift+Alt+KeyV",
-  settings_shortcut: "Ctrl+Shift+KeyS",
-  writing_mode: "split",
-  preview_render_path: "typst-inline",
-  preview_template: "literary",
-  compact_sidebar_on_start: false,
-  auto_sync_enabled: true,
-  auto_sync_interval_secs: 60,
-  realtime_sync_enabled: true,
-};
+const WEB_REPOSITORIES_KEY = "memo-sync-web-repositories";
+const WEB_MEMOS_KEY = "memo-sync-web-memos";
+const WEB_ATTACHMENTS_KEY = "memo-sync-web-attachments";
+const WEB_SETTINGS_KEY = "memo-sync-settings";
+
+const defaultSettings = DEFAULT_APP_SETTINGS;
 
 const demoRepo: Repository = {
   id: "demo-repo",
@@ -56,7 +54,7 @@ const demoRepo: Repository = {
   updated_at: new Date().toISOString(),
 };
 
-let demoMemos: Memo[] = [
+const defaultDemoMemos: Memo[] = [
   {
     id: "demo-memo",
     repository_id: demoRepo.id,
@@ -74,10 +72,25 @@ let demoMemos: Memo[] = [
   },
 ];
 
+let webRepositories = readWebValue<Repository[]>(WEB_REPOSITORIES_KEY, [demoRepo]);
+let demoMemos = readWebValue<Memo[]>(WEB_MEMOS_KEY, defaultDemoMemos);
+let demoAttachments = readWebValue<Array<MemoAttachment & { data_base64?: string }>>(WEB_ATTACHMENTS_KEY, []);
+
 function demoStats(): LocalStats {
   return {
     memo_count: demoMemos.filter((memo) => !memo.deleted).length,
-    repository_count: 1,
+    repository_count: webRepositories.length,
+    attachment_count: demoAttachments.filter((attachment) => !attachment.deleted).length,
+    attachment_blob_count: new Set(
+      demoAttachments
+        .filter((attachment) => !attachment.deleted)
+        .map((attachment) => attachment.content_sha256 || attachment.id),
+    ).size,
+    attachment_blob_bytes: demoAttachments
+      .filter((attachment) => !attachment.deleted)
+      .reduce((total, attachment) => total + attachment.byte_len, 0),
+    missing_attachment_blobs: 0,
+    attachment_metadata_mismatches: 0,
     pending_operations: 0,
     last_server_sequence: 0,
   };
@@ -86,8 +99,9 @@ function demoStats(): LocalStats {
 export async function bootstrap(): Promise<Bootstrap> {
   if (isTauri) return invoke("bootstrap");
   return {
-    repositories: [demoRepo],
+    repositories: webRepositories,
     memos: demoMemos,
+    attachments: demoAttachments.filter((attachment) => !attachment.deleted),
     device_id: "web-preview",
     settings: getWebSettings(),
     local_stats: demoStats(),
@@ -101,8 +115,9 @@ export async function getAppSettings(): Promise<AppSettings> {
 
 export async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
   if (isTauri) return invoke("update_app_settings", { settings });
-  localStorage.setItem("memo-sync-settings", JSON.stringify(settings));
-  return settings;
+  const next = withDefaultSettings(settings);
+  writeWebValue(WEB_SETTINGS_KEY, next);
+  return next;
 }
 
 export async function checkShortcuts(
@@ -139,15 +154,18 @@ export async function checkShortcuts(
 
 export async function createRepository(name: string, temporary: boolean, color: string): Promise<Repository> {
   if (isTauri) return invoke("create_repository", { name, temporary, color });
+  const now = new Date().toISOString();
   const repo: Repository = {
     id: crypto.randomUUID(),
-    name,
+    name: name.trim() || "Untitled repository",
     kind: temporary ? "Temporary" : "Persistent",
     sync_enabled: !temporary,
-    color,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    color: cleanWebColor(color),
+    created_at: now,
+    updated_at: now,
   };
+  webRepositories = [repo, ...webRepositories];
+  writeWebValue(WEB_REPOSITORIES_KEY, webRepositories);
   return repo;
 }
 
@@ -159,16 +177,19 @@ export async function updateRepository(
 ): Promise<Repository> {
   if (isTauri) return invoke("update_repository", { id, name, color, syncEnabled });
   const now = new Date().toISOString();
-  const existing = id === demoRepo.id ? demoRepo : null;
-  return {
+  const existing = webRepositories.find((repo) => repo.id === id);
+  const repo = {
     id,
     name: name.trim() || "Untitled repository",
     kind: existing?.kind ?? "Persistent",
     sync_enabled: existing?.kind === "Temporary" ? false : syncEnabled,
-    color,
+    color: cleanWebColor(color),
     created_at: existing?.created_at ?? now,
     updated_at: now,
   };
+  webRepositories = webRepositories.map((item) => (item.id === id ? repo : item));
+  writeWebValue(WEB_REPOSITORIES_KEY, webRepositories);
+  return repo;
 }
 
 export async function saveMemo(input: SaveMemoInput): Promise<Memo> {
@@ -182,27 +203,82 @@ export async function saveQuickMemo(input: SaveMemoInput): Promise<Memo> {
 }
 
 function saveMemoFallback(input: SaveMemoInput, source: Memo["source"]): Memo {
+  const existing = input.id ? demoMemos.find((memo) => memo.id === input.id) : null;
+  const now = new Date().toISOString();
   const memo: Memo = {
     id: input.id ?? crypto.randomUUID(),
     repository_id: input.repository_id,
-    title: input.title || "Untitled memo",
+    title: input.title.trim() || titleFromBody(input.body_md),
     body_md: input.body_md,
     tags: input.tags,
     pinned: input.pinned,
     archived: input.archived,
     deleted: false,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    created_at: existing?.created_at ?? now,
+    updated_at: now,
     source,
     meta: { byte_len: input.body_md.length },
   };
   demoMemos = [memo, ...demoMemos.filter((item) => item.id !== memo.id)];
+  writeWebValue(WEB_MEMOS_KEY, demoMemos);
   return memo;
 }
 
 export async function deleteMemo(id: string): Promise<void> {
   if (isTauri) return invoke("delete_memo", { id });
   demoMemos = demoMemos.filter((item) => item.id !== id);
+  writeWebValue(WEB_MEMOS_KEY, demoMemos);
+}
+
+export async function saveMemoAttachment(input: SaveAttachmentInput): Promise<MemoAttachment> {
+  if (isTauri) return invoke("save_memo_attachment", { input });
+  const memo = demoMemos.find((item) => item.id === input.memo_id);
+  if (!memo) throw new Error("Memo not found");
+  const now = new Date().toISOString();
+  const byteLen = decodedBase64Length(input.data_base64);
+  const attachment: MemoAttachment & { data_base64: string } = {
+    id: crypto.randomUUID(),
+    memo_id: input.memo_id,
+    repository_id: memo.repository_id,
+    file_name: input.file_name.trim() || "attachment",
+    media_type: input.media_type,
+    byte_len: byteLen,
+    content_sha256: await sha256Base64Payload(input.data_base64),
+    deleted: false,
+    created_at: now,
+    updated_at: now,
+    data_base64: input.data_base64,
+  };
+  demoAttachments = [attachment, ...demoAttachments];
+  writeWebValue(WEB_ATTACHMENTS_KEY, demoAttachments);
+  return attachment;
+}
+
+function decodedBase64Length(dataBase64: string) {
+  const padding = dataBase64.endsWith("==") ? 2 : dataBase64.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((dataBase64.length * 3) / 4) - padding);
+}
+
+async function sha256Base64Payload(dataBase64: string) {
+  const binary = atob(dataBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export async function deleteMemoAttachment(id: string): Promise<void> {
+  if (isTauri) return invoke("delete_memo_attachment", { id });
+  demoAttachments = demoAttachments.map((attachment) => (attachment.id === id ? { ...attachment, deleted: true } : attachment));
+  writeWebValue(WEB_ATTACHMENTS_KEY, demoAttachments);
+}
+
+export function attachmentUrl(id: string): string {
+  if (isTauri) return previewProtocolUrl(`/attachment/${id}`);
+  const attachment = demoAttachments.find((item) => item.id === id);
+  return attachment?.data_base64 ? `data:${attachment.media_type};base64,${attachment.data_base64}` : "";
 }
 
 export async function captureClipboardMemo(repositoryId: string): Promise<Memo> {
@@ -295,11 +371,48 @@ export function listenSyncCompleted(handler: (payload: SyncCompletedPayload) => 
 }
 
 function getWebSettings(): AppSettings {
-  const stored = localStorage.getItem("memo-sync-settings");
+  const stored = getWebStorage()?.getItem(WEB_SETTINGS_KEY);
   if (!stored) return defaultSettings;
   try {
-    return { ...defaultSettings, ...JSON.parse(stored) };
+    return withDefaultSettings(JSON.parse(stored));
   } catch {
     return defaultSettings;
   }
+}
+
+function getWebStorage(): Storage | null {
+  if (typeof localStorage === "undefined") return null;
+  return localStorage;
+}
+
+function readWebValue<T>(key: string, fallback: T): T {
+  const stored = getWebStorage()?.getItem(key);
+  if (!stored) return fallback;
+  try {
+    return JSON.parse(stored) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeWebValue<T>(key: string, value: T) {
+  getWebStorage()?.setItem(key, JSON.stringify(value));
+}
+
+function previewProtocolUrl(path: string): string {
+  const isWindowsLike = navigator.userAgent.includes("Windows") || navigator.userAgent.includes("Android");
+  return isWindowsLike ? `http://memo-preview.localhost${path}` : `memo-preview://localhost${path}`;
+}
+
+function cleanWebColor(color: string) {
+  return /^#[0-9a-f]{6}$/i.test(color) ? color : "#c86f52";
+}
+
+function titleFromBody(body: string) {
+  return body
+    .split(/\r\n|\r|\n/)
+    .find((line) => line.trim())
+    ?.trim()
+    .replace(/^#+\s*/, "")
+    .slice(0, 64) || "Untitled memo";
 }

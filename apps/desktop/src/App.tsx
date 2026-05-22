@@ -12,6 +12,7 @@ import {
   FileText,
   FolderPlus,
   Heading1,
+  ImagePlus,
   Info,
   Italic,
   Keyboard,
@@ -20,6 +21,7 @@ import {
   Maximize2,
   Minimize2,
   MonitorCog,
+  Palette,
   PanelLeft,
   PanelLeftClose,
   PanelLeftOpen,
@@ -33,24 +35,29 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { type CSSProperties, type KeyboardEvent, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import type { AppSettings, LocalStats, Memo, RenderTemplate, Repository, SaveMemoInput } from "./types";
+import { type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import type { AppSettings, LocalStats, Memo, MemoAttachment, RenderFormat, RenderTemplate, Repository, SaveMemoInput } from "./types";
 import {
+  attachmentUrl,
   bootstrap,
   captureClipboardMemo,
   checkShortcuts,
   createRepository,
   currentWindowLabel,
+  deleteMemoAttachment,
   deleteMemo,
   emitMemosChanged,
   APP_EVENTS,
   isDesktopApp,
+  isMobileApp,
+  isNativeApp,
   listenCurrentWindowFocus,
   listenAppEvent,
   listenMemosChanged,
   listenSyncCompleted,
   readClipboardText,
   saveMemo,
+  saveMemoAttachment,
   saveQuickMemo,
   searchMemos,
   showQuickCaptureWindow,
@@ -60,30 +67,25 @@ import {
   updateRepository,
   windowAction,
 } from "./tauri";
+import { attachmentMarkdown, fileToBase64, imageFilesFromTransfer, isSupportedImageType, MAX_IMAGE_ATTACHMENT_BYTES, removeAttachmentMarkdown, resolveMemoImageUrl } from "./attachments";
 import { memoHeadings, memoPreviewText, memoSearchText, normalizeTag, readingTimeLabel, textStatsLabel } from "./search";
 import { CommandPalette, type CommandItem } from "./components/CommandPalette";
 import { MemoList } from "./components/MemoList";
 import { ToastStack, type ToastKind, type ToastMessage } from "./components/ToastStack";
 import { TypstPreview } from "./components/TypstPreview";
+import { DEFAULT_APP_SETTINGS } from "./defaults";
 
-const colors = ["#c86f52", "#6f8f83", "#5f7597", "#9a7a42", "#8a6fa8"];
-const defaultSettings: AppSettings = {
-  server_url: "http://127.0.0.1:7373",
-  quick_capture_shortcut: "Ctrl+Shift+KeyM",
-  clipboard_capture_shortcut: "Ctrl+Shift+Alt+KeyV",
-  settings_shortcut: "Ctrl+Shift+KeyS",
-  writing_mode: "split",
-  preview_render_path: "typst-inline",
-  preview_template: "literary",
-  compact_sidebar_on_start: false,
-  auto_sync_enabled: true,
-  auto_sync_interval_secs: 60,
-  realtime_sync_enabled: true,
-};
+const colors = ["#b45f43", "#737b63", "#627487", "#9a7248", "#826979"];
+const defaultSettings = DEFAULT_APP_SETTINGS;
 
 const emptyStats: LocalStats = {
   memo_count: 0,
   repository_count: 0,
+  attachment_count: 0,
+  attachment_blob_count: 0,
+  attachment_blob_bytes: 0,
+  missing_attachment_blobs: 0,
+  attachment_metadata_mismatches: 0,
   pending_operations: 0,
   last_server_sequence: 0,
 };
@@ -94,6 +96,7 @@ type CaptureMode = "edit" | "split" | "preview";
 type ViewFilter = "active" | "pinned" | "archived" | "clipboard" | "quick";
 type SortMode = "updated-desc" | "created-desc" | "title-asc" | "size-desc";
 type ListDensity = "comfortable" | "compact";
+type Appearance = "studio" | "grove" | "dusk";
 
 const viewFilters: Array<{ id: ViewFilter; label: string; icon: typeof FileText }> = [
   { id: "active", label: "Inbox", icon: FileText },
@@ -118,6 +121,27 @@ const sortOptions: Array<{ value: SortMode; label: string }> = [
   { value: "size-desc", label: "Longest notes" },
 ];
 
+const appearanceOptions: Array<{ value: Appearance; label: string; detail: string }> = [
+  { value: "studio", label: "Studio", detail: "warm paper" },
+  { value: "grove", label: "Grove", detail: "sage and blue" },
+  { value: "dusk", label: "Dusk", detail: "ink and plum" },
+];
+
+function nextAppearance(current: Appearance): Appearance {
+  const index = appearanceOptions.findIndex((item) => item.value === current);
+  return appearanceOptions[(index + 1) % appearanceOptions.length].value;
+}
+
+function appearanceLabel(appearance: Appearance) {
+  return appearanceOptions.find((item) => item.value === appearance)?.label ?? "Studio";
+}
+
+function memoRenderFormat(memo: Memo, settings: AppSettings): RenderFormat {
+  if (settings.preview_markup_mode === "markdown") return "markdown";
+  if (settings.preview_markup_mode === "typst") return "typst";
+  return memo.tags.some((tag) => tag.toLowerCase() === "typst") ? "typst" : "markdown";
+}
+
 function toggleTag(tags: string[], tag: string) {
   return tags.includes(tag) ? tags.filter((item) => item !== tag) : [...tags, tag];
 }
@@ -140,6 +164,7 @@ export function App() {
 function WorkbenchApp() {
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [memos, setMemos] = useState<Memo[]>([]);
+  const [attachments, setAttachments] = useState<MemoAttachment[]>([]);
   const [allTags, setAllTags] = useState<string[]>([]);
   const [activeRepo, setActiveRepo] = useState<string | "all">("all");
   const [activeMemoId, setActiveMemoId] = useState<string | null>(null);
@@ -166,14 +191,18 @@ function WorkbenchApp() {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [sortMode, setSortMode] = useState<SortMode>(() => (localStorage.getItem("memo-sort-mode") as SortMode | null) ?? "updated-desc");
   const [listDensity, setListDensity] = useState<ListDensity>(() => (localStorage.getItem("memo-list-density") as ListDensity | null) ?? "comfortable");
+  const [appearance, setAppearance] = useState<Appearance>(() => (localStorage.getItem("memo-appearance") as Appearance | null) ?? "studio");
+  const [attachmentDropActive, setAttachmentDropActive] = useState(false);
   const quickRepoRef = useRef("");
   const repositoriesRef = useRef<Repository[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const searchRequestRef = useRef(0);
   const saveTimerRef = useRef<number | null>(null);
   const pendingSaveRef = useRef<SaveMemoInput | null>(null);
   const toastIdRef = useRef(0);
+  const shellKind = isDesktopApp ? "desktop-shell" : isMobileApp ? "mobile-native-shell android-shell" : "web-shell";
 
   useEffect(() => {
     quickRepoRef.current = quickRepo;
@@ -190,6 +219,10 @@ function WorkbenchApp() {
   useEffect(() => {
     localStorage.setItem("memo-list-density", listDensity);
   }, [listDensity]);
+
+  useEffect(() => {
+    localStorage.setItem("memo-appearance", appearance);
+  }, [appearance]);
 
   useEffect(() => {
     bootstrap().then(applyBootstrap);
@@ -229,7 +262,7 @@ function WorkbenchApp() {
   }, []);
 
   useEffect(() => {
-    if (!isDesktopApp) return;
+    if (!isNativeApp) return;
     const requestId = searchRequestRef.current + 1;
     searchRequestRef.current = requestId;
     const handle = window.setTimeout(() => {
@@ -256,9 +289,30 @@ function WorkbenchApp() {
     return () => window.clearTimeout(handle);
   }, [activeRepo, query, tagFilters, viewFilter]);
 
+  function openQuickCapture() {
+    if (isDesktopApp) {
+      void showQuickCaptureWindow();
+    } else {
+      setQuickOpen(true);
+      window.setTimeout(() => {
+        const field = document.querySelector<HTMLTextAreaElement>(".quick-modal textarea");
+        field?.focus();
+      }, 40);
+    }
+  }
+
+  function openSettings() {
+    if (isDesktopApp) {
+      void showSettingsWindow();
+    } else {
+      setDialog("settings");
+    }
+  }
+
   function applyBootstrap(data: Awaited<ReturnType<typeof bootstrap>>, preferredMemoId?: string | null) {
     setRepositories(data.repositories);
     setMemos(data.memos);
+    setAttachments(data.attachments);
     setAllTags(collectMemoTags(data.memos));
     setDeviceId(data.device_id);
     setSettings(data.settings);
@@ -304,6 +358,10 @@ function WorkbenchApp() {
   }, [activeRepo, deferredQuery, memos, sortMode, tagFilters, viewFilter]);
 
   const activeMemo = visibleMemos.find((memo) => memo.id === activeMemoId) ?? visibleMemos[0] ?? null;
+  const activeAttachments = useMemo(
+    () => attachments.filter((attachment) => !attachment.deleted && attachment.memo_id === activeMemo?.id),
+    [activeMemo?.id, attachments],
+  );
   const tags = allTags;
   const tagStats = useMemo(() => {
     const counts = new Map<string, number>();
@@ -391,7 +449,7 @@ function WorkbenchApp() {
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "j") {
         event.preventDefault();
-        showQuickCaptureWindow();
+        openQuickCapture();
         return;
       }
       if (event.key === "ArrowDown") {
@@ -421,7 +479,7 @@ function WorkbenchApp() {
       category: "Action",
       detail: "Open the floating capture window",
       shortcut: "Ctrl J",
-      run: () => showQuickCaptureWindow(),
+      run: () => openQuickCapture(),
     },
     {
       id: "clipboard",
@@ -566,6 +624,20 @@ function WorkbenchApp() {
       run: () => setListDensity((density) => (density === "compact" ? "comfortable" : "compact")),
     },
     {
+      id: "cycle-appearance",
+      title: `Appearance: ${appearanceLabel(appearance)}`,
+      category: "View",
+      detail: "Cycle color palette",
+      run: () => setAppearance((value) => nextAppearance(value)),
+    },
+    ...appearanceOptions.map((option) => ({
+      id: `appearance-${option.value}`,
+      title: option.label,
+      category: "Appearance",
+      detail: option.value === appearance ? "Current palette" : option.detail,
+      run: () => setAppearance(option.value),
+    })),
+    {
       id: "toggle-sidebar",
       title: sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar",
       category: "View",
@@ -577,7 +649,7 @@ function WorkbenchApp() {
       title: "Settings",
       category: "App",
       detail: "Sync endpoint, shortcuts, and about",
-      run: () => (isDesktopApp ? showSettingsWindow() : setDialog("settings")),
+      run: () => openSettings(),
     },
     ...(activeRepo !== "all" && activeRepository
       ? [
@@ -774,6 +846,100 @@ function WorkbenchApp() {
     const next = `${body.slice(0, start)}${block}${body.slice(end)}`;
     const caret = start + block.length - 5;
     updateEditorBody(next, { start: caret, end: caret });
+  }
+
+  async function handleAttachFiles(files: Iterable<File> | null) {
+    const incomingFiles = files ? Array.from(files) : [];
+    if (!activeMemo || !incomingFiles.length) return;
+    await flushPendingSave();
+    const savedAttachments: MemoAttachment[] = [];
+    for (const file of incomingFiles) {
+      if (!isSupportedImageType(file.type)) {
+        notify("error", "Image not added", `${file.name} is not a supported image type`);
+        continue;
+      }
+      if (file.size > MAX_IMAGE_ATTACHMENT_BYTES) {
+        notify("error", "Image too large", `${file.name} is over ${Math.round(MAX_IMAGE_ATTACHMENT_BYTES / 1024 / 1024)} MB`);
+        continue;
+      }
+      try {
+        const data_base64 = await fileToBase64(file);
+        const saved = await saveMemoAttachment({
+          memo_id: activeMemo.id,
+          file_name: file.name,
+          media_type: file.type,
+          data_base64,
+        });
+        savedAttachments.push(saved);
+      } catch (error) {
+        notify("error", "Image not added", error instanceof Error ? error.message : String(error));
+      }
+    }
+    if (!savedAttachments.length) return;
+    setAttachments((items) => [...savedAttachments, ...items.filter((item) => !savedAttachments.some((saved) => saved.id === item.id))]);
+    insertAttachmentMarkdown(savedAttachments);
+    notify("success", "Image added", savedAttachments.length === 1 ? savedAttachments[0].file_name : `${savedAttachments.length} images`);
+  }
+
+  function insertAttachmentMarkdown(savedAttachments: MemoAttachment[]) {
+    if (!activeMemo) return;
+    const markdown = savedAttachments.map((item) => attachmentMarkdown(item.file_name, item.id)).join("\n");
+    const element = editorRef.current;
+    const body = activeMemo.body_md;
+    const hasEditorSelection = element && document.activeElement === element;
+    if (hasEditorSelection) {
+      const start = element.selectionStart;
+      const end = element.selectionEnd;
+      const prefix = start > 0 && !body.slice(0, start).endsWith("\n") ? "\n\n" : "";
+      const suffix = body.slice(end).startsWith("\n") ? "" : "\n";
+      const next = `${body.slice(0, start)}${prefix}${markdown}${suffix}${body.slice(end)}`;
+      const caret = start + prefix.length + markdown.length + suffix.length;
+      updateEditorBody(next, { start: caret, end: caret });
+      return;
+    }
+    const separator = body.endsWith("\n") || !body ? "" : "\n\n";
+    updateEditorBody(`${body}${separator}${markdown}\n`);
+  }
+
+  function handleEditorPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const files = imageFilesFromTransfer(event.clipboardData);
+    if (!files.length) return;
+    event.preventDefault();
+    void handleAttachFiles(files);
+  }
+
+  function handleAttachmentDragOver(event: DragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    setAttachmentDropActive(true);
+  }
+
+  function handleAttachmentDrop(event: DragEvent<HTMLElement>) {
+    const files = imageFilesFromTransfer(event.dataTransfer);
+    if (!files.length) {
+      setAttachmentDropActive(false);
+      return;
+    }
+    event.preventDefault();
+    setAttachmentDropActive(false);
+    void handleAttachFiles(files);
+  }
+
+  async function handleDeleteAttachment(attachment: MemoAttachment) {
+    try {
+      await flushPendingSave();
+      await deleteMemoAttachment(attachment.id);
+      setAttachments((items) => items.filter((item) => item.id !== attachment.id));
+      if (activeMemo?.id === attachment.memo_id) {
+        const nextBody = removeAttachmentMarkdown(activeMemo.body_md, attachment.id);
+        if (nextBody !== activeMemo.body_md) {
+          await handleSave({ body_md: nextBody }, { debounce: false });
+        }
+      }
+      notify("success", "Attachment removed", attachment.file_name);
+    } catch (error) {
+      notify("error", "Remove failed", error instanceof Error ? error.message : String(error));
+    }
   }
 
   function jumpToHeading(line: number) {
@@ -1091,12 +1257,14 @@ function WorkbenchApp() {
   }
 
   return (
-    <main className={`shell ${isDesktopApp ? "desktop-shell" : "web-shell"} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+    <main className={`shell theme-${appearance} ${shellKind} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       {isDesktopApp && (
         <Titlebar
-          onQuick={() => showQuickCaptureWindow()}
-          onSettings={() => showSettingsWindow()}
+          onQuick={openQuickCapture}
+          onSettings={openSettings}
           onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
+          onAppearance={() => setAppearance((value) => nextAppearance(value))}
+          appearanceLabel={appearanceLabel(appearance)}
           sidebarCollapsed={sidebarCollapsed}
         />
       )}
@@ -1111,9 +1279,22 @@ function WorkbenchApp() {
               <button className="icon-button sidebar-toggle" title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={() => setSidebarCollapsed((value) => !value)}>
                 {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
               </button>
+              <button className="icon-button" title={`Appearance: ${appearanceLabel(appearance)}`} onClick={() => setAppearance((value) => nextAppearance(value))}>
+                <Palette size={18} />
+              </button>
               <button className="icon-button" title="Create repository" onClick={() => setNewRepoOpen(true)}>
                 <FolderPlus size={18} />
               </button>
+              {!isDesktopApp && (
+                <>
+                  <button className="icon-button mobile-shell-action" title="Quick capture" onClick={openQuickCapture}>
+                    <Sparkles size={18} />
+                  </button>
+                  <button className="icon-button mobile-shell-action" title="Settings" onClick={openSettings}>
+                    <Settings size={18} />
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
@@ -1177,16 +1358,30 @@ function WorkbenchApp() {
                 notes
               </span>
               <span>
+                <strong>{localStats.attachment_count}</strong>
+                media
+              </span>
+              <span>
+                <strong>{Math.ceil(localStats.attachment_blob_bytes / 1024)}</strong>
+                KB cache
+              </span>
+              <span>
                 <strong>{localStats.last_server_sequence}</strong>
                 seq
               </span>
             </div>
+            {(localStats.missing_attachment_blobs > 0 || localStats.attachment_metadata_mismatches > 0) && (
+              <small className="sync-warning">
+                {localStats.missing_attachment_blobs + localStats.attachment_metadata_mismatches} media cache issue
+                {localStats.missing_attachment_blobs + localStats.attachment_metadata_mismatches === 1 ? "" : "s"}
+              </small>
+            )}
             <small>{syncText}</small>
           </div>
 
           {!isDesktopApp && (
             <div className="web-footer">
-              <button onClick={() => setDialog("settings")}>
+              <button onClick={openSettings}>
                 <Settings size={15} />
                 Settings
               </button>
@@ -1448,7 +1643,37 @@ function WorkbenchApp() {
                   <button title="Link" onClick={() => wrapEditorSelection("[", "](https://)", "link")}>
                     <Link size={15} />
                   </button>
+                  <button title="Add image" onClick={() => fileInputRef.current?.click()}>
+                    <ImagePlus size={15} />
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    className="hidden-file-input"
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    multiple
+                    onChange={(event) => {
+                      void handleAttachFiles(event.currentTarget.files);
+                      event.currentTarget.value = "";
+                    }}
+                  />
                   <span>Ctrl+Enter saves now</span>
+                </div>
+              )}
+              {activeAttachments.length > 0 && (
+                <div className="attachment-strip" aria-label="Memo images">
+                  {activeAttachments.map((attachment) => (
+                    <figure key={attachment.id} className="attachment-tile">
+                      <img src={attachmentUrl(attachment.id)} alt={attachment.file_name} loading="lazy" />
+                      <figcaption>
+                        <span title={attachment.file_name}>{attachment.file_name}</span>
+                        <small>{Math.ceil(attachment.byte_len / 1024)} KB</small>
+                      </figcaption>
+                      <button title="Remove image" onClick={() => handleDeleteAttachment(attachment)}>
+                        <X size={13} />
+                      </button>
+                    </figure>
+                  ))}
                 </div>
               )}
               {activeMemoHeadings.length > 0 && (
@@ -1467,22 +1692,30 @@ function WorkbenchApp() {
                 </nav>
               )}
 
-              <div className={`editor-grid ${mode}`}>
+              <div
+                className={`editor-grid ${mode} ${attachmentDropActive ? "drop-active" : ""}`}
+                onDragLeave={() => setAttachmentDropActive(false)}
+                onDragOver={handleAttachmentDragOver}
+                onDrop={handleAttachmentDrop}
+              >
                 {mode !== "preview" && (
                   <textarea
                     ref={editorRef}
                     value={activeMemo.body_md}
                     onChange={(event) => handleSave({ body_md: event.target.value }, { debounce: true })}
                     onKeyDown={handleEditorKeyDown}
+                    onPaste={handleEditorPaste}
                     spellCheck={false}
+                    wrap="soft"
                   />
                 )}
                 {mode !== "edit" && (
                   <article className="markdown preview-surface">
                     <TypstPreview
                       body={activeMemo.body_md}
-                      format={activeMemo.tags.some((tag) => tag.toLowerCase() === "typst") ? "typst" : "markdown"}
+                      format={memoRenderFormat(activeMemo, settings)}
                       renderPath={settings.preview_render_path}
+                      resolveImageUrl={resolveMemoImageUrl}
                       template={settings.preview_template}
                     />
                   </article>
@@ -1522,7 +1755,7 @@ function WorkbenchApp() {
               ))}
             </select>
             <TagEditor tags={quickTags} suggestions={tags} onChange={setQuickTags} />
-            <textarea autoFocus value={quickText} onChange={(event) => setQuickText(event.target.value)} />
+            <textarea autoFocus value={quickText} onChange={(event) => setQuickText(event.target.value)} wrap="soft" />
             <div className="modal-actions">
               <button className="secondary" onClick={fillQuickFromClipboard}>
                 <Clipboard size={17} />
@@ -1791,10 +2024,11 @@ function QuickCaptureWindow() {
             onKeyDown={handleQuickKeyDown}
             spellCheck={false}
             placeholder="Paste an idea, code, or a line you want to keep. Ctrl+Enter saves."
+            wrap="soft"
           />
           <article className="capture-preview markdown preview-surface">
             {quickText.trim() ? (
-              <TypstPreview body={quickText} format="markdown" renderPath={settings.preview_render_path === "markdown" ? "typst-inline" : settings.preview_render_path} template={settings.preview_template} />
+              <TypstPreview body={quickText} format="markdown" renderPath={settings.preview_render_path === "markdown" ? "typst-inline" : settings.preview_render_path} resolveImageUrl={resolveMemoImageUrl} template={settings.preview_template} />
             ) : (
               <p className="preview-empty">Typst preview</p>
             )}
@@ -1889,11 +2123,15 @@ function Titlebar({
   onQuick,
   onSettings,
   onToggleSidebar,
+  onAppearance,
+  appearanceLabel,
   sidebarCollapsed,
 }: {
   onQuick: () => void;
   onSettings: () => void;
   onToggleSidebar: () => void;
+  onAppearance: () => void;
+  appearanceLabel: string;
   sidebarCollapsed: boolean;
 }) {
   return (
@@ -1912,6 +2150,9 @@ function Titlebar({
       <div className="titlebar-actions">
         <button title="Quick capture" onClick={(event) => { event.stopPropagation(); onQuick(); }}>
           <Sparkles size={15} />
+        </button>
+        <button title={`Appearance: ${appearanceLabel}`} onClick={(event) => { event.stopPropagation(); onAppearance(); }}>
+          <Palette size={15} />
         </button>
         <button title="Settings" onClick={(event) => { event.stopPropagation(); onSettings(); }}>
           <Settings size={15} />
@@ -2044,10 +2285,18 @@ function AppDialog({
             <label>
               <span>Preview render path</span>
               <select value={draft.preview_render_path} onChange={(event) => setDraft({ ...draft, preview_render_path: event.target.value as AppSettings["preview_render_path"] })}>
-                <option value="typst-inline">Typst inline SVG</option>
-                <option value="typst-asset">Typst asset protocol</option>
-                <option value="markdown">React Markdown</option>
                 <option value="auto">Auto</option>
+                <option value="typst-asset">Typst asset protocol</option>
+                <option value="typst-inline">Typst inline SVG</option>
+                <option value="markdown">React Markdown</option>
+              </select>
+            </label>
+            <label>
+              <span>Markup mode</span>
+              <select value={draft.preview_markup_mode} onChange={(event) => setDraft({ ...draft, preview_markup_mode: event.target.value as AppSettings["preview_markup_mode"] })}>
+                <option value="auto">Auto by tag</option>
+                <option value="markdown">Markdown escaped to Typst</option>
+                <option value="typst">Direct Typst</option>
               </select>
             </label>
             <label>
@@ -2167,6 +2416,18 @@ function AppDialog({
               <div>
                 <dt>Repositories</dt>
                 <dd>{localStats.repository_count}</dd>
+              </div>
+              <div>
+                <dt>Media</dt>
+                <dd>{localStats.attachment_count}</dd>
+              </div>
+              <div>
+                <dt>Resource cache</dt>
+                <dd>{localStats.attachment_blob_count} / {Math.ceil(localStats.attachment_blob_bytes / 1024)} KB</dd>
+              </div>
+              <div>
+                <dt>Cache warnings</dt>
+                <dd>{localStats.missing_attachment_blobs + localStats.attachment_metadata_mismatches}</dd>
               </div>
               <div>
                 <dt>Pending sync</dt>

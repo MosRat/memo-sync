@@ -3313,9 +3313,11 @@ dependencies = [
 name = "memo-core"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.18",
  "uuid",
 ]
@@ -3325,6 +3327,7 @@ name = "memo-desktop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "memo-core",
  "memo-render",
@@ -3351,6 +3354,7 @@ name = "memo-render"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "insta",
  "pulldown-cmark",
  "serde",
@@ -3366,6 +3370,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "clap",
  "http-body-util",

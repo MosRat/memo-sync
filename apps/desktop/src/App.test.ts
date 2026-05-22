@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { attachmentMarkdown, attachmentRefsFromMarkdown, bodyHasOnlyAttachmentImages, removeAttachmentMarkdown } from "./attachments";
 import { memoHeadings, memoPreviewText, normalizeTag, readingTimeLabel, memoSearchText, textStats, textStatsLabel, tokenizeTags } from "./search";
 
 describe("tag parsing", () => {
@@ -53,5 +54,28 @@ describe("memo outline helpers", () => {
       { line: 2, level: 2, title: "Child" },
     ]);
     expect(memoPreviewText("# Title\n\n```rust\nfn main() {}\n```\n正文")).toBe("Title code 正文");
+  });
+});
+
+describe("attachment markdown helpers", () => {
+  it("escapes generated image alt text", () => {
+    expect(attachmentMarkdown("a[1]\\b.png", "att-1")).toBe("![a\\[1\\]\\\\b.png](memo-attachment:att-1)");
+  });
+
+  it("removes whole-line attachment references without collapsing paragraphs", () => {
+    expect(removeAttachmentMarkdown("before\n\n![img](memo-attachment:att-1)\n\nafter", "att-1")).toBe("before\n\nafter");
+  });
+
+  it("removes inline attachment references and leaves surrounding text", () => {
+    expect(removeAttachmentMarkdown("left ![img](memo-attachment:att-1) right\n![keep](memo-attachment:att-2)", "att-1")).toBe(
+      "left  right\n![keep](memo-attachment:att-2)",
+    );
+  });
+
+  it("detects pure image memos for render bypass", () => {
+    const id = "018f2b4f-1111-7222-8333-444444444444";
+    expect(bodyHasOnlyAttachmentImages(`![one](memo-attachment:${id})\n\n`)).toBe(true);
+    expect(attachmentRefsFromMarkdown(`![one](memo-attachment:${id})`)).toEqual([id]);
+    expect(bodyHasOnlyAttachmentImages(`caption\n![one](memo-attachment:${id})`)).toBe(false);
   });
 });

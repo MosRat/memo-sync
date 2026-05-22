@@ -1,27 +1,44 @@
+#![cfg_attr(not(feature = "typst-render"), allow(dead_code))]
+
 use anyhow::anyhow;
+#[cfg(feature = "typst-render")]
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::LazyLock,
-    time::Instant,
-};
+use std::collections::{HashMap, VecDeque};
+#[cfg(feature = "typst-render")]
+use std::{sync::LazyLock, time::Instant};
+#[cfg(feature = "typst-render")]
 use typst::foundations::{Dict, IntoValue};
+#[cfg(feature = "typst-render")]
 use typst::layout::{Abs, PagedDocument};
+#[cfg(feature = "typst-render")]
 use typst_as_lib::{typst_kit_options::TypstKitFontOptions, TypstEngine, TypstTemplateMainFile};
 
-const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v17";
+const RENDER_TEMPLATE_VERSION: &[u8] = b"preview-template-v18";
+const SOFT_BREAK: char = '\u{200b}';
+const LONG_TOKEN_MIN_CHARS: usize = 32;
+const LONG_TOKEN_RUN_CHARS: usize = 18;
+#[cfg(feature = "typst-render")]
 const RENDER_MAIN_TEMPLATE: &str = r#"#import sys: inputs
 #eval(inputs.source, mode: "markup")
 "#;
+const ATTACHMENT_URL_PREFIX: &str = "memo-attachment:";
+#[cfg(feature = "typst-render")]
 const PREVIEW_SERIF_FONT: &[u8] = include_bytes!("../assets/fonts/NotoSerifSC-VF.ttf");
+#[cfg(feature = "typst-render")]
 const PREVIEW_SANS_FONT: &[u8] = include_bytes!("../assets/fonts/NotoSansSC-VF.ttf");
+#[cfg(feature = "typst-render")]
 const PREVIEW_MONO_FONT: &[u8] = include_bytes!("../assets/fonts/CascadiaCode.ttf");
+#[cfg(feature = "typst-render")]
 const PREVIEW_INTER_FONT: &[u8] = include_bytes!("../assets/fonts/InterVariable.ttf");
+#[cfg(feature = "typst-render")]
 const PREVIEW_JETBRAINS_MONO_FONT: &[u8] = include_bytes!("../assets/fonts/JetBrainsMono-VF.ttf");
+#[cfg(feature = "typst-render")]
 const PREVIEW_WENKAI_FONT: &[u8] = include_bytes!("../assets/fonts/LXGWWenKai-Regular.ttf");
 
+#[cfg(feature = "typst-render")]
 static RENDER_ENGINE: LazyLock<TypstEngine<TypstTemplateMainFile>> = LazyLock::new(|| {
     TypstEngine::builder()
         .fonts([
@@ -55,6 +72,17 @@ pub struct RenderMemoInput {
     pub format: RenderFormat,
     #[serde(default = "default_render_template")]
     pub template: RenderTemplate,
+    #[serde(default)]
+    pub resources: Vec<RenderBinaryResource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderBinaryResource {
+    #[serde(default)]
+    pub attachment_id: Option<String>,
+    pub virtual_path: String,
+    pub media_type: String,
+    pub data_base64: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,22 +142,51 @@ pub struct RenderPageMetadata {
 }
 
 pub fn render_memo(input: RenderMemoInput) -> anyhow::Result<RenderMemoOutput> {
+    render_memo_with_mode(input, RenderMode::Inline)
+}
+
+pub fn render_memo_asset(input: RenderMemoInput) -> anyhow::Result<RenderMemoOutput> {
+    render_memo_with_mode(input, RenderMode::Asset)
+}
+
+#[cfg(feature = "typst-render")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenderMode {
+    Inline,
+    Asset,
+}
+
+#[cfg(not(feature = "typst-render"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenderMode {
+    Inline,
+    Asset,
+}
+
+#[cfg(feature = "typst-render")]
+fn render_memo_with_mode(
+    input: RenderMemoInput,
+    mode: RenderMode,
+) -> anyhow::Result<RenderMemoOutput> {
     let cache_key = render_cache_key(&input);
     let started = Instant::now();
     let expects_text = input.format == RenderFormat::Markdown && markdown_expects_text(&input.body);
+    let resource_index = RenderResourceIndex::new(&input.resources);
     let (source, diagnostics) = match input.format {
         RenderFormat::Markdown => {
-            let (typst_body, diagnostics) = markdown_to_typst(&input.body);
+            let (typst_body, diagnostics) =
+                markdown_to_typst_with_resources(&input.body, &resource_index);
             (typst_source(&typst_body, input.template), diagnostics)
         }
-        RenderFormat::Typst => (typst_source(&input.body, input.template), Vec::new()),
+        RenderFormat::Typst => (
+            typst_source(
+                &rewrite_attachment_urls(&input.body, &resource_index),
+                input.template,
+            ),
+            Vec::new(),
+        ),
     };
-    let mut inputs = Dict::new();
-    inputs.insert("source".into(), source.into_value());
-    let document: PagedDocument = RENDER_ENGINE
-        .compile_with_input(inputs)
-        .output
-        .map_err(|error| anyhow!("Typst compile failed: {error:?}"))?;
+    let document = compile_typst_source(source, &input.resources)?;
     let pages = document
         .pages
         .iter()
@@ -147,10 +204,12 @@ pub fn render_memo(input: RenderMemoInput) -> anyhow::Result<RenderMemoOutput> {
         .collect::<Vec<_>>();
     let svg = if pages.len() == 1 {
         pages[0].svg.clone()
+    } else if mode == RenderMode::Asset {
+        String::new()
     } else {
         typst_svg::svg_merged(&document, Abs::pt(0.0))
     };
-    if expects_text && !svg_has_text_geometry(&svg) {
+    if expects_text && !pages.iter().any(|page| svg_has_text_geometry(&page.svg)) {
         return Err(anyhow!(
             "Typst generated no visible text glyphs; check preview font availability"
         ));
@@ -167,6 +226,17 @@ pub fn render_memo(input: RenderMemoInput) -> anyhow::Result<RenderMemoOutput> {
         height_pt,
         pages,
     })
+}
+
+#[cfg(not(feature = "typst-render"))]
+fn render_memo_with_mode(
+    input: RenderMemoInput,
+    _mode: RenderMode,
+) -> anyhow::Result<RenderMemoOutput> {
+    let cache_key = render_cache_key(&input);
+    Err(anyhow!(
+        "Native Typst rendering is not bundled in this build; use Markdown preview or enable the typst-render feature (cache key: {cache_key})"
+    ))
 }
 
 impl RenderMemoOutput {
@@ -195,6 +265,123 @@ impl RenderMemoOutput {
     pub fn byte_len(&self) -> usize {
         self.svg.len() + self.pages.iter().map(|page| page.bytes).sum::<usize>()
     }
+
+    fn has_inline_svg(&self) -> bool {
+        !self.svg.is_empty()
+    }
+}
+
+#[cfg(feature = "typst-render")]
+fn compile_typst_source(
+    source: String,
+    resources: &[RenderBinaryResource],
+) -> anyhow::Result<PagedDocument> {
+    let mut inputs = Dict::new();
+    inputs.insert("source".into(), source.into_value());
+
+    if resources.is_empty() {
+        return RENDER_ENGINE
+            .compile_with_input(inputs)
+            .output
+            .map_err(|error| anyhow!("Typst compile failed: {error:?}"));
+    }
+
+    let binaries = decode_render_resources(resources)?;
+    let engine = TypstEngine::builder()
+        .fonts([
+            PREVIEW_SERIF_FONT,
+            PREVIEW_SANS_FONT,
+            PREVIEW_MONO_FONT,
+            PREVIEW_INTER_FONT,
+            PREVIEW_JETBRAINS_MONO_FONT,
+            PREVIEW_WENKAI_FONT,
+        ])
+        .search_fonts_with(
+            TypstKitFontOptions::default()
+                .include_system_fonts(false)
+                .include_embedded_fonts(true),
+        )
+        .main_file(RENDER_MAIN_TEMPLATE)
+        .with_static_file_resolver(
+            binaries
+                .iter()
+                .map(|(path, bytes)| (path.as_str(), bytes.clone())),
+        )
+        .with_package_file_resolver()
+        .build();
+    engine
+        .compile_with_input(inputs)
+        .output
+        .map_err(|error| anyhow!("Typst compile failed: {error:?}"))
+}
+
+#[cfg(feature = "typst-render")]
+fn decode_render_resources(
+    resources: &[RenderBinaryResource],
+) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
+    resources
+        .iter()
+        .map(|resource| {
+            let bytes = BASE64_STANDARD
+                .decode(resource.data_base64.as_bytes())
+                .map_err(|_| {
+                    anyhow!(
+                        "render resource {} is not valid base64",
+                        resource.virtual_path
+                    )
+                })?;
+            Ok((resource.virtual_path.clone(), bytes))
+        })
+        .collect()
+}
+
+struct RenderResourceIndex<'a> {
+    by_attachment_id: HashMap<&'a str, &'a RenderBinaryResource>,
+}
+
+impl<'a> RenderResourceIndex<'a> {
+    fn new(resources: &'a [RenderBinaryResource]) -> Self {
+        let by_attachment_id = resources
+            .iter()
+            .filter_map(|resource| {
+                let id = resource.attachment_id.as_deref().or_else(|| {
+                    resource
+                        .virtual_path
+                        .strip_prefix("attachments/")?
+                        .split('.')
+                        .next()
+                })?;
+                Some((id, resource))
+            })
+            .collect();
+        Self { by_attachment_id }
+    }
+
+    fn virtual_path_for_url(&self, url: &str) -> Option<&'a str> {
+        let id = url.strip_prefix(ATTACHMENT_URL_PREFIX)?.trim();
+        self.by_attachment_id
+            .get(id)
+            .map(|resource| resource.virtual_path.as_str())
+    }
+}
+
+impl Default for RenderResourceIndex<'static> {
+    fn default() -> Self {
+        Self {
+            by_attachment_id: HashMap::new(),
+        }
+    }
+}
+
+fn rewrite_attachment_urls(source: &str, resources: &RenderResourceIndex<'_>) -> String {
+    let mut output = source.to_string();
+    for (id, resource) in &resources.by_attachment_id {
+        output = output.replace(
+            &format!("{ATTACHMENT_URL_PREFIX}{id}"),
+            &resource.virtual_path,
+        );
+    }
+    output
 }
 
 #[derive(Debug)]
@@ -219,6 +406,9 @@ impl RenderCache {
 
     pub fn get(&mut self, key: &str) -> Option<RenderMemoOutput> {
         let cached = self.entries.get(key)?;
+        if !cached.has_inline_svg() {
+            return None;
+        }
         move_to_back(&mut self.order, key);
         let mut output = cached.clone();
         output.cached = true;
@@ -277,7 +467,7 @@ impl RenderCache {
 }
 
 pub fn render_cache_key(input: &RenderMemoInput) -> String {
-    cache_key(&input.body, input.format, input.template)
+    cache_key_with_resources(&input.body, input.format, input.template, &input.resources)
 }
 
 fn move_to_back(order: &mut VecDeque<String>, key: &str) {
@@ -456,7 +646,21 @@ fn typst_source(body: &str, template: RenderTemplate) -> String {
     )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImageRenderMode {
+    Resource,
+    Fallback,
+}
+
+#[cfg(test)]
 fn markdown_to_typst(markdown: &str) -> (String, Vec<String>) {
+    markdown_to_typst_with_resources(markdown, &RenderResourceIndex::default())
+}
+
+fn markdown_to_typst_with_resources(
+    markdown: &str,
+    resources: &RenderResourceIndex<'_>,
+) -> (String, Vec<String>) {
     let mut out = String::new();
     let mut diagnostics = Vec::new();
     if has_unclosed_markdown_fence(markdown) {
@@ -478,6 +682,7 @@ fn markdown_to_typst(markdown: &str) -> (String, Vec<String>) {
     let mut table_depth = 0usize;
     let mut table_cell_open = false;
     let mut paragraph_stack: Vec<bool> = Vec::new();
+    let mut image_stack: Vec<ImageRenderMode> = Vec::new();
 
     let normalized_markdown = normalize_markdown_math(markdown);
     for event in Parser::new_ext(&normalized_markdown, options) {
@@ -524,9 +729,17 @@ fn markdown_to_typst(markdown: &str) -> (String, Vec<String>) {
                     out.push_str("\")[");
                 }
                 Tag::Image { dest_url, .. } => {
-                    out.push_str("#emph[image: ");
-                    out.push_str(&escape_typst_text(&dest_url));
-                    out.push_str(" / ");
+                    if let Some(path) = resources.virtual_path_for_url(&dest_url) {
+                        out.push_str("#image(\"");
+                        out.push_str(&escape_typst_string(path));
+                        out.push_str("\", width: 100%)");
+                        image_stack.push(ImageRenderMode::Resource);
+                    } else {
+                        out.push_str("#emph[image: ");
+                        out.push_str(&escape_typst_text(&dest_url));
+                        out.push_str(" / ");
+                        image_stack.push(ImageRenderMode::Fallback);
+                    }
                 }
                 Tag::Table(_) => {
                     table_depth += 1;
@@ -577,8 +790,12 @@ fn markdown_to_typst(markdown: &str) -> (String, Vec<String>) {
                 | TagEnd::Strikethrough
                 | TagEnd::Superscript
                 | TagEnd::Subscript
-                | TagEnd::Link
-                | TagEnd::Image => out.push(']'),
+                | TagEnd::Link => out.push(']'),
+                TagEnd::Image => {
+                    if image_stack.pop() == Some(ImageRenderMode::Fallback) {
+                        out.push(']');
+                    }
+                }
                 TagEnd::Table => {
                     table_depth = table_depth.saturating_sub(1);
                     table_cell_open = false;
@@ -597,6 +814,9 @@ fn markdown_to_typst(markdown: &str) -> (String, Vec<String>) {
                 | TagEnd::MetadataBlock(_) => {}
             },
             Event::Text(text) => {
+                if image_stack.last() == Some(&ImageRenderMode::Resource) {
+                    continue;
+                }
                 if code_block {
                     out.push_str(&text);
                 } else {
@@ -604,6 +824,9 @@ fn markdown_to_typst(markdown: &str) -> (String, Vec<String>) {
                 }
             }
             Event::Code(code) => {
+                if image_stack.last() == Some(&ImageRenderMode::Resource) {
+                    continue;
+                }
                 out.push_str("#raw(\"");
                 out.push_str(&escape_typst_string(&code));
                 out.push_str("\")");
@@ -780,10 +1003,59 @@ fn take_braced(input: &str) -> Option<(&str, &str)> {
 
 fn escape_typst_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
+    let mut token = String::new();
     for ch in text.chars() {
-        escape_typst_char(ch, &mut out);
+        if ch.is_whitespace() {
+            escape_typst_token(&token, &mut out);
+            token.clear();
+            escape_typst_char(ch, &mut out);
+        } else {
+            token.push(ch);
+        }
     }
+    escape_typst_token(&token, &mut out);
     out
+}
+
+fn escape_typst_token(token: &str, out: &mut String) {
+    if token.is_empty() {
+        return;
+    }
+    if !needs_soft_breaks(token) {
+        for ch in token.chars() {
+            escape_typst_char(ch, out);
+        }
+        return;
+    }
+
+    let mut run = 0usize;
+    let total = token.chars().count();
+    for (index, ch) in token.chars().enumerate() {
+        escape_typst_char(ch, out);
+        run += 1;
+        if index + 1 >= total {
+            continue;
+        }
+        if is_soft_break_after(ch) || run >= LONG_TOKEN_RUN_CHARS {
+            out.push(SOFT_BREAK);
+            run = 0;
+        }
+    }
+}
+
+fn needs_soft_breaks(token: &str) -> bool {
+    token.chars().count() >= LONG_TOKEN_MIN_CHARS
+        && token.chars().any(|ch| ch.is_ascii_alphanumeric())
+        && token
+            .chars()
+            .all(|ch| ch.is_ascii() || ch == '@' || ch == ':' || ch == '/' || ch == '.')
+}
+
+fn is_soft_break_after(ch: char) -> bool {
+    matches!(
+        ch,
+        '/' | '\\' | '.' | '-' | '_' | '@' | ':' | '?' | '&' | '=' | '%' | '#' | '+'
+    )
 }
 
 fn escape_typst_char(ch: char, out: &mut String) {
@@ -808,7 +1080,17 @@ fn svg_has_text_geometry(svg: &str) -> bool {
     svg.contains("class=\"typst-text\"")
 }
 
+#[cfg(test)]
 fn cache_key(body: &str, format: RenderFormat, template: RenderTemplate) -> String {
+    cache_key_with_resources(body, format, template, &[])
+}
+
+fn cache_key_with_resources(
+    body: &str,
+    format: RenderFormat,
+    template: RenderTemplate,
+    resources: &[RenderBinaryResource],
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(RENDER_TEMPLATE_VERSION);
     hasher.update(match format {
@@ -823,6 +1105,18 @@ fn cache_key(body: &str, format: RenderFormat, template: RenderTemplate) -> Stri
         RenderTemplate::Notebook => b"notebook".as_slice(),
     });
     hasher.update(body.as_bytes());
+    for resource in resources {
+        if let Some(attachment_id) = &resource.attachment_id {
+            hasher.update(attachment_id.as_bytes());
+        }
+        hasher.update([0]);
+        hasher.update(resource.virtual_path.as_bytes());
+        hasher.update([0]);
+        hasher.update(resource.media_type.as_bytes());
+        hasher.update([0]);
+        hasher.update(resource.data_base64.as_bytes());
+        hasher.update([0]);
+    }
     format!("{:x}", hasher.finalize())
 }
 
@@ -843,16 +1137,34 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "typst-render")]
     fn typst_smoke_renders_svg() {
         let output = render_memo(RenderMemoInput {
             body: "Hello *Typst*".to_string(),
             format: RenderFormat::Typst,
             template: RenderTemplate::Literary,
+            resources: Vec::new(),
         })
         .unwrap();
         assert!(output.svg.contains("<svg"));
         assert!(output.svg.contains("class=\"typst-doc\""));
         assert!(svg_has_text_geometry(&output.svg));
+    }
+
+    #[test]
+    #[cfg(not(feature = "typst-render"))]
+    fn render_without_typst_feature_reports_disabled_renderer() {
+        let error = render_memo(RenderMemoInput {
+            body: "Hello *Typst*".to_string(),
+            format: RenderFormat::Typst,
+            template: RenderTemplate::Literary,
+            resources: Vec::new(),
+        })
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("Native Typst rendering is not bundled"));
+        assert!(error.contains("cache key:"));
     }
 
     #[test]
@@ -914,6 +1226,47 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "typst-render")]
+    fn asset_render_keeps_pages_without_multipage_merged_svg() {
+        let output = render_memo_asset(RenderMemoInput {
+            body: "first page\n#pagebreak()\nsecond page".to_string(),
+            format: RenderFormat::Typst,
+            template: RenderTemplate::Compact,
+            resources: Vec::new(),
+        })
+        .unwrap();
+
+        assert!(output.pages.len() > 1);
+        assert!(output.svg.is_empty());
+        assert!(output.pages.iter().all(|page| page.svg.contains("<svg")));
+    }
+
+    #[test]
+    fn render_cache_does_not_return_asset_only_output_for_inline() {
+        let mut cache = RenderCache::new(4, 1024 * 1024);
+        cache.insert(RenderMemoOutput {
+            svg: String::new(),
+            diagnostics: Vec::new(),
+            elapsed_ms: 9,
+            cache_key: "memo".to_string(),
+            cached: false,
+            width_pt: 100.0,
+            height_pt: 160.0,
+            pages: vec![RenderPageOutput {
+                index: 0,
+                width_pt: 100.0,
+                height_pt: 80.0,
+                bytes: 15,
+                svg: "<svg>page</svg>".to_string(),
+            }],
+        });
+
+        assert!(cache.get("memo").is_none());
+        assert!(cache.get_metadata("memo").is_some());
+        assert_eq!(cache.get_page_svg("memo", 0).unwrap(), "<svg>page</svg>");
+    }
+
+    #[test]
     fn markdown_converter_closes_code_fences_and_keeps_headings() {
         let (typst, diagnostics) = markdown_to_typst(
             "# 一、测试\n## 1.测试\n### 测试\n---\n```rust\nfn main() {\n  println!(\"Hello World!\");\n}",
@@ -968,6 +1321,46 @@ mod tests {
     }
 
     #[test]
+    fn markdown_converter_maps_attachment_images_to_typst_resources() {
+        let resource = RenderBinaryResource {
+            attachment_id: Some("018f2b4f-1111-7222-8333-444444444444".to_string()),
+            virtual_path: "attachments/content-addressed.png".to_string(),
+            media_type: "image/png".to_string(),
+            data_base64: "iVBORw0KGgo=".to_string(),
+        };
+        let resources = [resource];
+        let index = RenderResourceIndex::new(&resources);
+        let (typst, diagnostics) = markdown_to_typst_with_resources(
+            "![pixel](memo-attachment:018f2b4f-1111-7222-8333-444444444444)",
+            &index,
+        );
+
+        assert!(diagnostics.is_empty());
+        assert!(typst.contains("#image(\"attachments/content-addressed.png\", width: 100%)"));
+        assert!(!typst.contains("pixel"));
+    }
+
+    #[test]
+    #[cfg(feature = "typst-render")]
+    fn direct_typst_can_reference_attachment_urls() {
+        let output = render_memo(RenderMemoInput {
+            body: "#image(\"memo-attachment:018f2b4f-1111-7222-8333-444444444444\", width: 20pt)"
+                .to_string(),
+            format: RenderFormat::Typst,
+            template: RenderTemplate::Literary,
+            resources: vec![RenderBinaryResource {
+                attachment_id: Some("018f2b4f-1111-7222-8333-444444444444".to_string()),
+                virtual_path: "attachments/content-addressed.svg".to_string(),
+                media_type: "image/svg+xml".to_string(),
+                data_base64: "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxIiBoZWlnaHQ9IjEiPjxyZWN0IHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNmMDAiLz48L3N2Zz4=".to_string(),
+            }],
+        })
+        .unwrap();
+
+        assert!(output.svg.contains("<svg"));
+    }
+
+    #[test]
     fn markdown_converter_preserves_visible_soft_breaks() {
         let (typst, diagnostics) = markdown_to_typst("first line\n*second line*");
 
@@ -993,11 +1386,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "typst-render")]
     fn markdown_inline_semantics_render_with_typst() {
         let output = render_memo(RenderMemoInput {
             body: "Use **Markdown**, *italic*, and $ \\frac{1}{2} + \\sin{2} $.".to_string(),
             format: RenderFormat::Markdown,
             template: RenderTemplate::Literary,
+            resources: Vec::new(),
         })
         .unwrap();
 
@@ -1006,12 +1401,14 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "typst-render")]
     fn markdown_email_address_renders_as_plain_text() {
         let output = render_memo(RenderMemoInput {
             body: "账号 LaishaGavlin2608@hotmail.com\n接码地址：https://example.com/mailbox"
                 .to_string(),
             format: RenderFormat::Markdown,
             template: RenderTemplate::Literary,
+            resources: Vec::new(),
         })
         .unwrap();
 
@@ -1020,12 +1417,25 @@ mod tests {
     }
 
     #[test]
+    fn markdown_converter_inserts_soft_breaks_for_long_plain_tokens() {
+        let token =
+            "LaishaGavlin2608@hotmail.com----cejug727184---9e5f94bc-e8a4-4e73-b8be-63364c29d753";
+        let (typst, diagnostics) = markdown_to_typst(&format!("接码地址：{token}"));
+
+        assert!(diagnostics.is_empty());
+        assert!(typst.contains(SOFT_BREAK));
+        assert!(typst.contains("LaishaGavlin2608\\@"));
+    }
+
+    #[test]
+    #[cfg(feature = "typst-render")]
     fn markdown_rich_semantics_render_with_typst() {
         let output = render_memo(RenderMemoInput {
             body: "# Heading\n\n> Quote with [link](https://example.com).\n\n1. First\n2. Second\n\nInline `code` and ~~old~~ text."
                 .to_string(),
             format: RenderFormat::Markdown,
             template: RenderTemplate::Technical,
+            resources: Vec::new(),
         })
         .unwrap();
 
@@ -1034,11 +1444,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "typst-render")]
     fn markdown_sample_renders_more_than_code_block() {
         let output = render_memo(RenderMemoInput {
             body: "# 一、测试\n## 1.测试\n### 测试\n---\n```rust\nfn main() {\n  println!(\"Hello World!\");\n}".to_string(),
             format: RenderFormat::Markdown,
             template: RenderTemplate::Literary,
+            resources: Vec::new(),
         })
         .unwrap();
 
@@ -1056,11 +1468,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "typst-render")]
     fn markdown_smoke_renders_svg() {
         let output = render_memo(RenderMemoInput {
             body: "# Hello\n\nUse **Markdown**.".to_string(),
             format: RenderFormat::Markdown,
             template: RenderTemplate::Literary,
+            resources: Vec::new(),
         })
         .unwrap();
         assert!(output.svg.contains("<svg"));
@@ -1068,11 +1482,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "typst-render")]
     fn embedded_fonts_render_chinese_and_code() {
         let output = render_memo(RenderMemoInput {
             body: "# 备忘录\n\n中文 English mixed text.\n\n```rust\nfn main() {}\n```".to_string(),
             format: RenderFormat::Markdown,
             template: RenderTemplate::Literary,
+            resources: Vec::new(),
         })
         .unwrap();
 
@@ -1082,11 +1498,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "typst-render")]
     fn typst_preview_page_is_transparent() {
         let output = render_memo(RenderMemoInput {
             body: "Transparent preview surface".to_string(),
             format: RenderFormat::Markdown,
             template: RenderTemplate::Literary,
+            resources: Vec::new(),
         })
         .unwrap();
 
@@ -1097,6 +1515,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "typst-render")]
     fn every_preview_template_renders_text_and_code() {
         for template in [
             RenderTemplate::Literary,
@@ -1110,6 +1529,7 @@ mod tests {
                     .to_string(),
                 format: RenderFormat::Markdown,
                 template,
+                resources: Vec::new(),
             })
             .unwrap();
 

@@ -1,30 +1,49 @@
 mod store;
 
-use memo_core::{Memo, MemoFilter, MemoSource, Repository};
-use memo_render::{RenderCache, RenderMemoInput, RenderMemoMetadata, RenderMemoOutput};
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use memo_core::{Memo, MemoAttachmentMeta, MemoFilter, MemoSource, Repository};
+use memo_render::{
+    RenderBinaryResource, RenderCache, RenderMemoInput, RenderMemoMetadata, RenderMemoOutput,
+};
 use serde::{Deserialize, Serialize};
+#[cfg(not(mobile))]
+use std::str::FromStr;
 use std::{
+    collections::{HashMap, HashSet},
+    io::Write,
     path::{Path, PathBuf},
-    str::FromStr,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use store::{LocalStats, LocalStore, SaveMemoInput, SyncSummary};
+use store::{LocalStats, LocalStore, SaveAttachmentInput, SaveMemoInput, SyncSummary};
+#[cfg(not(mobile))]
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder,
+    WebviewUrl, WebviewWindowBuilder,
 };
+use tauri::{Emitter, Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
+#[cfg(not(mobile))]
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{Mutex as AsyncMutex, Notify};
 use uuid::Uuid;
 
 const EVENT_OPEN_QUICK_CAPTURE: &str = "open-quick-capture";
+#[cfg(not(mobile))]
 const EVENT_CLIPBOARD_CAPTURE_REQUESTED: &str = "clipboard-capture-requested";
 const EVENT_MEMOS_CHANGED: &str = "memos-changed";
 const EVENT_SYNC_COMPLETED: &str = "sync-completed";
 const PREVIEW_PROTOCOL: &str = "memo-preview";
+const ATTACHMENT_URL_PREFIX: &str = "memo-attachment:";
+#[cfg(mobile)]
+const RENDER_CACHE_ENTRIES: usize = 24;
+#[cfg(not(mobile))]
+const RENDER_CACHE_ENTRIES: usize = 96;
+#[cfg(mobile)]
+const RENDER_CACHE_BYTES: usize = 6 * 1024 * 1024;
+#[cfg(not(mobile))]
+const RENDER_CACHE_BYTES: usize = 24 * 1024 * 1024;
 
 #[derive(Clone)]
 struct AppState {
@@ -34,18 +53,21 @@ struct AppState {
     settings: Arc<Mutex<AppSettings>>,
     sync_lock: Arc<AsyncMutex<()>>,
     render_cache: Arc<Mutex<RenderCache>>,
+    render_inflight: Arc<AsyncMutex<HashMap<String, Arc<Notify>>>>,
 }
 
 #[derive(Debug, Serialize)]
 struct Bootstrap {
     repositories: Vec<Repository>,
     memos: Vec<Memo>,
+    attachments: Vec<MemoAttachmentMeta>,
     device_id: String,
     settings: AppSettings,
     local_stats: LocalStats,
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(mobile, allow(dead_code))]
 struct ShortcutCheckRequest {
     quick_capture_shortcut: String,
     clipboard_capture_shortcut: String,
@@ -93,6 +115,8 @@ struct AppSettings {
     writing_mode: String,
     #[serde(default = "default_preview_render_path")]
     preview_render_path: String,
+    #[serde(default = "default_preview_markup_mode")]
+    preview_markup_mode: String,
     #[serde(default = "default_preview_template")]
     preview_template: String,
     compact_sidebar_on_start: bool,
@@ -113,7 +137,11 @@ fn default_auto_sync_enabled() -> bool {
 }
 
 fn default_preview_render_path() -> String {
-    "typst-inline".to_string()
+    "auto".to_string()
+}
+
+fn default_preview_markup_mode() -> String {
+    "auto".to_string()
 }
 
 fn default_preview_template() -> String {
@@ -137,6 +165,7 @@ impl Default for AppSettings {
             settings_shortcut: default_settings_shortcut(),
             writing_mode: "split".to_string(),
             preview_render_path: default_preview_render_path(),
+            preview_markup_mode: default_preview_markup_mode(),
             preview_template: default_preview_template(),
             compact_sidebar_on_start: false,
             auto_sync_enabled: default_auto_sync_enabled(),
@@ -162,6 +191,7 @@ struct MemosChangedPayload {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(not(mobile))]
 enum SecondInstanceIntent {
     ShowMain,
     QuickCapture,
@@ -171,10 +201,16 @@ enum SecondInstanceIntent {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .register_uri_scheme_protocol(PREVIEW_PROTOCOL, |ctx, request| {
             preview_protocol_response(ctx.app_handle(), request.uri().path())
         })
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_clipboard_manager::init());
+
+    #[cfg(not(mobile))]
+    let builder = builder
         .plugin(tauri_plugin_single_instance::init(
             |app, argv, _working_directory| match second_instance_intent(&argv) {
                 SecondInstanceIntent::ShowMain => {
@@ -185,14 +221,13 @@ pub fn run() {
                 SecondInstanceIntent::Settings => spawn_settings_window(app.clone()),
             },
         ))
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build());
+
+    builder
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
@@ -204,7 +239,11 @@ pub fn run() {
             let settings = load_settings(&settings_path)?;
             let settings = Arc::new(Mutex::new(settings));
             let sync_lock = Arc::new(AsyncMutex::new(()));
-            let render_cache = Arc::new(Mutex::new(RenderCache::new(96, 24 * 1024 * 1024)));
+            let render_cache = Arc::new(Mutex::new(RenderCache::new(
+                RENDER_CACHE_ENTRIES,
+                RENDER_CACHE_BYTES,
+            )));
+            let render_inflight = Arc::new(AsyncMutex::new(HashMap::new()));
             app.manage(AppState {
                 store: store.clone(),
                 device_id: device_id.clone(),
@@ -212,6 +251,7 @@ pub fn run() {
                 settings: settings.clone(),
                 sync_lock: sync_lock.clone(),
                 render_cache,
+                render_inflight,
             });
             spawn_background_sync(
                 app.handle().clone(),
@@ -227,8 +267,11 @@ pub fn run() {
                 settings.clone(),
                 sync_lock,
             );
-            setup_tray(app)?;
-            setup_shortcuts(app.handle(), &settings.lock().unwrap())?;
+            #[cfg(not(mobile))]
+            {
+                setup_tray(app)?;
+                setup_shortcuts(app.handle(), &settings.lock().unwrap())?;
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -242,6 +285,8 @@ pub fn run() {
             render_memo_preview_asset,
             save_memo,
             save_quick_memo,
+            save_memo_attachment,
+            delete_memo_attachment,
             delete_memo,
             capture_clipboard_memo,
             read_clipboard_text,
@@ -266,11 +311,13 @@ async fn bootstrap(state: State<'_, AppState>) -> Result<Bootstrap, String> {
         .memos(MemoFilter::default())
         .await
         .map_err(to_string)?;
+    let attachments = state.store.attachments().await.map_err(to_string)?;
     let settings = state.settings.lock().unwrap().clone();
     let local_stats = state.store.stats().await.map_err(to_string)?;
     Ok(Bootstrap {
         repositories,
         memos,
+        attachments,
         device_id: state.device_id.clone(),
         settings,
         local_stats,
@@ -289,17 +336,23 @@ fn update_app_settings(
     settings: AppSettings,
 ) -> Result<AppSettings, String> {
     validate_settings(&settings)?;
-    let previous = state.settings.lock().map_err(to_string)?.clone();
-    if let Err(error) = apply_shortcuts(&app, &settings) {
-        let _ = apply_shortcuts(&app, &previous);
-        return Err(error);
+    #[cfg(not(mobile))]
+    {
+        let previous = state.settings.lock().map_err(to_string)?.clone();
+        if let Err(error) = apply_shortcuts(&app, &settings) {
+            let _ = apply_shortcuts(&app, &previous);
+            return Err(error);
+        }
     }
+    #[cfg(mobile)]
+    let _ = app;
     save_settings(&state.settings_path, &settings).map_err(to_string)?;
     *state.settings.lock().map_err(to_string)? = settings.clone();
     Ok(settings)
 }
 
 #[tauri::command]
+#[cfg(not(mobile))]
 fn check_shortcuts(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -307,6 +360,22 @@ fn check_shortcuts(
 ) -> Result<ShortcutCheckResult, String> {
     let current = state.settings.lock().map_err(to_string)?.clone();
     check_shortcut_availability(&app, &current, request)
+}
+
+#[tauri::command]
+#[cfg(mobile)]
+fn check_shortcuts(
+    _app: tauri::AppHandle,
+    _state: State<'_, AppState>,
+    _request: ShortcutCheckRequest,
+) -> Result<ShortcutCheckResult, String> {
+    Ok(ShortcutCheckResult {
+        ok: false,
+        quick_available: false,
+        clipboard_available: false,
+        settings_available: false,
+        message: "Keyboard shortcuts are not available on mobile".to_string(),
+    })
 }
 
 #[tauri::command]
@@ -343,6 +412,7 @@ async fn render_memo_preview(
     state: State<'_, AppState>,
     input: RenderMemoInput,
 ) -> Result<RenderMemoOutput, String> {
+    let input = attach_render_resources(&state, input).await?;
     render_memo_output(&state, input).await
 }
 
@@ -351,26 +421,47 @@ async fn render_memo_preview_asset(
     state: State<'_, AppState>,
     input: RenderMemoInput,
 ) -> Result<RenderMemoAssetOutput, String> {
+    let input = attach_render_resources(&state, input).await?;
     let cache_key = memo_render::render_cache_key(&input);
-    if let Some(metadata) = state
-        .render_cache
-        .lock()
-        .map_err(to_string)?
-        .get_metadata(&cache_key)
-    {
-        return Ok(asset_output_from_metadata(metadata));
+    let inflight_key = format!("asset:{cache_key}");
+
+    loop {
+        if let Some(metadata) = state
+            .render_cache
+            .lock()
+            .map_err(to_string)?
+            .get_metadata(&cache_key)
+        {
+            return Ok(asset_output_from_metadata(metadata));
+        }
+
+        if let Some(notify) = wait_for_or_start_render(&state, &inflight_key).await {
+            notify.notified().await;
+            continue;
+        }
+
+        break;
     }
 
-    let output = tauri::async_runtime::spawn_blocking(move || memo_render::render_memo(input))
-        .await
-        .map_err(to_string)?
-        .map_err(to_string)?;
-    let metadata = output.metadata(false, output.elapsed_ms);
-    let inserted = state.render_cache.lock().map_err(to_string)?.insert(output);
-    if !inserted {
-        return Err("preview is too large for the asset cache".to_string());
-    }
-    Ok(asset_output_from_metadata(metadata))
+    let render_result =
+        tauri::async_runtime::spawn_blocking(move || memo_render::render_memo_asset(input))
+            .await
+            .map_err(to_string)
+            .and_then(|result| result.map_err(to_string));
+    let result = match render_result {
+        Ok(output) => {
+            let metadata = output.metadata(false, output.elapsed_ms);
+            let inserted = state.render_cache.lock().map_err(to_string)?.insert(output);
+            if inserted {
+                Ok(asset_output_from_metadata(metadata))
+            } else {
+                Err("preview is too large for the asset cache".to_string())
+            }
+        }
+        Err(error) => Err(error),
+    };
+    finish_render(&state, &inflight_key).await;
+    result
 }
 
 async fn render_memo_output(
@@ -378,24 +469,125 @@ async fn render_memo_output(
     input: RenderMemoInput,
 ) -> Result<RenderMemoOutput, String> {
     let cache_key = memo_render::render_cache_key(&input);
-    if let Some(output) = state
-        .render_cache
-        .lock()
-        .map_err(to_string)?
-        .get(&cache_key)
-    {
-        return Ok(output);
+    let inflight_key = format!("inline:{cache_key}");
+
+    loop {
+        if let Some(output) = state
+            .render_cache
+            .lock()
+            .map_err(to_string)?
+            .get(&cache_key)
+        {
+            return Ok(output);
+        }
+
+        if let Some(notify) = wait_for_or_start_render(state, &inflight_key).await {
+            notify.notified().await;
+            continue;
+        }
+
+        break;
     }
-    let output = tauri::async_runtime::spawn_blocking(move || memo_render::render_memo(input))
-        .await
-        .map_err(to_string)?
-        .map_err(to_string)?;
-    state
-        .render_cache
-        .lock()
-        .map_err(to_string)?
-        .insert(output.clone());
-    Ok(output)
+
+    let render_result =
+        tauri::async_runtime::spawn_blocking(move || memo_render::render_memo(input))
+            .await
+            .map_err(to_string)
+            .and_then(|result| result.map_err(to_string));
+    let result = match render_result {
+        Ok(output) => {
+            state
+                .render_cache
+                .lock()
+                .map_err(to_string)?
+                .insert(output.clone());
+            Ok(output)
+        }
+        Err(error) => Err(error),
+    };
+    finish_render(state, &inflight_key).await;
+    result
+}
+
+async fn attach_render_resources(
+    state: &AppState,
+    mut input: RenderMemoInput,
+) -> Result<RenderMemoInput, String> {
+    let attachment_ids = attachment_ids_in_body(&input.body);
+    if attachment_ids.is_empty() {
+        return Ok(input);
+    }
+
+    let mut resources = Vec::with_capacity(attachment_ids.len());
+    for id in attachment_ids {
+        let Some((media_type, bytes)) =
+            state.store.attachment_bytes(id).await.map_err(to_string)?
+        else {
+            continue;
+        };
+        let Some(extension) = attachment_extension(&media_type) else {
+            continue;
+        };
+        let content_hash = memo_core::sha256_hex(&bytes);
+        resources.push(RenderBinaryResource {
+            attachment_id: Some(id.to_string()),
+            virtual_path: format!("attachments/{content_hash}.{extension}"),
+            media_type,
+            data_base64: BASE64_STANDARD.encode(bytes),
+        });
+    }
+    input.resources = resources;
+    Ok(input)
+}
+
+fn attachment_ids_in_body(body: &str) -> Vec<Uuid> {
+    let mut ids = Vec::new();
+    let mut seen = HashSet::new();
+    let mut rest = body;
+    while let Some(start) = rest.find(ATTACHMENT_URL_PREFIX) {
+        let after = &rest[start + ATTACHMENT_URL_PREFIX.len()..];
+        let candidate = after
+            .split(|char: char| {
+                char.is_whitespace() || matches!(char, ')' | ']' | '"' | '\'' | '<' | '>')
+            })
+            .next()
+            .unwrap_or_default()
+            .trim();
+        if let Ok(id) = Uuid::parse_str(candidate) {
+            if seen.insert(id) {
+                ids.push(id);
+            }
+        }
+        rest = after;
+    }
+    ids
+}
+
+fn attachment_extension(media_type: &str) -> Option<&'static str> {
+    match media_type {
+        "image/png" => Some("png"),
+        "image/jpeg" => Some("jpg"),
+        "image/webp" => Some("webp"),
+        "image/gif" => Some("gif"),
+        _ => None,
+    }
+}
+
+async fn wait_for_or_start_render(state: &AppState, key: &str) -> Option<Arc<Notify>> {
+    let mut inflight = state.render_inflight.lock().await;
+    if let Some(notify) = inflight.get(key) {
+        Some(notify.clone())
+    } else {
+        inflight.insert(key.to_string(), Arc::new(Notify::new()));
+        None
+    }
+}
+
+async fn finish_render(state: &AppState, key: &str) {
+    let notify = state.render_inflight.lock().await.remove(key);
+    if let Some(notify) = notify {
+        notify.notify_waiters();
+    }
 }
 
 fn asset_output_from_metadata(metadata: RenderMemoMetadata) -> RenderMemoAssetOutput {
@@ -442,9 +634,11 @@ fn preview_protocol_url(path: &str) -> String {
     }
 }
 
+#[derive(Clone, Copy)]
 enum PreviewPath<'a> {
     Merged { cache_key: &'a str },
     Page { cache_key: &'a str, index: usize },
+    Attachment { id: Uuid },
 }
 
 fn preview_path(path: &str) -> Option<PreviewPath<'_>> {
@@ -456,6 +650,12 @@ fn preview_path(path: &str) -> Option<PreviewPath<'_>> {
             return Some(PreviewPath::Merged { cache_key: key });
         }
         return None;
+    }
+
+    if let Some(id) = path.strip_prefix("/attachment/") {
+        return Uuid::parse_str(id)
+            .ok()
+            .map(|id| PreviewPath::Attachment { id });
     }
 
     let path = path.strip_prefix("/page/")?.strip_suffix(".svg")?;
@@ -487,10 +687,29 @@ fn preview_protocol_response(app: &tauri::AppHandle, path: &str) -> tauri::http:
             "preview cache is not ready",
         );
     };
-    let svg = match state.render_cache.lock() {
+    if let PreviewPath::Attachment { id } = preview_path {
+        let result = tauri::async_runtime::block_on(state.store.attachment_bytes(id));
+        return match result {
+            Ok(Some((media_type, bytes))) => binary_protocol_response(&media_type, bytes),
+            Ok(None) => {
+                preview_protocol_error(tauri::http::StatusCode::NOT_FOUND, "attachment not found")
+            }
+            Err(error) => preview_protocol_error(
+                tauri::http::StatusCode::INTERNAL_SERVER_ERROR,
+                &error.to_string(),
+            ),
+        };
+    }
+    let (svg, etag) = match state.render_cache.lock() {
         Ok(mut cache) => match preview_path {
-            PreviewPath::Merged { cache_key } => cache.get_svg(cache_key),
-            PreviewPath::Page { cache_key, index } => cache.get_page_svg(cache_key, index),
+            PreviewPath::Merged { cache_key } => {
+                (cache.get_svg(cache_key), format!("\"{cache_key}:merged\""))
+            }
+            PreviewPath::Page { cache_key, index } => (
+                cache.get_page_svg(cache_key, index),
+                format!("\"{cache_key}:page:{index}\""),
+            ),
+            PreviewPath::Attachment { .. } => unreachable!("handled before render cache access"),
         },
         Err(error) => {
             return preview_protocol_error(
@@ -510,10 +729,31 @@ fn preview_protocol_response(app: &tauri::AppHandle, path: &str) -> tauri::http:
         )
         .header(
             tauri::http::header::CACHE_CONTROL,
-            "private, max-age=300, stale-while-revalidate=30",
+            "private, max-age=3600, immutable",
         )
+        .header(tauri::http::header::ETAG, etag)
+        .header("X-Content-Type-Options", "nosniff")
         .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
         .body(svg.into_bytes())
+        .unwrap_or_else(|error| {
+            preview_protocol_error(
+                tauri::http::StatusCode::INTERNAL_SERVER_ERROR,
+                &error.to_string(),
+            )
+        })
+}
+
+fn binary_protocol_response(content_type: &str, bytes: Vec<u8>) -> tauri::http::Response<Vec<u8>> {
+    tauri::http::Response::builder()
+        .status(tauri::http::StatusCode::OK)
+        .header(tauri::http::header::CONTENT_TYPE, content_type)
+        .header(
+            tauri::http::header::CACHE_CONTROL,
+            "private, max-age=3600, immutable",
+        )
+        .header("X-Content-Type-Options", "nosniff")
+        .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .body(bytes)
         .unwrap_or_else(|error| {
             preview_protocol_error(
                 tauri::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -559,6 +799,27 @@ async fn delete_memo(state: State<'_, AppState>, id: Uuid) -> Result<(), String>
     state
         .store
         .delete_memo(id, &state.device_id)
+        .await
+        .map_err(to_string)
+}
+
+#[tauri::command]
+async fn save_memo_attachment(
+    state: State<'_, AppState>,
+    input: SaveAttachmentInput,
+) -> Result<MemoAttachmentMeta, String> {
+    state
+        .store
+        .save_attachment(input, &state.device_id)
+        .await
+        .map_err(to_string)
+}
+
+#[tauri::command]
+async fn delete_memo_attachment(state: State<'_, AppState>, id: Uuid) -> Result<(), String> {
+    state
+        .store
+        .delete_attachment(id, &state.device_id)
         .await
         .map_err(to_string)
 }
@@ -635,11 +896,19 @@ async fn show_settings_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[cfg(not(mobile))]
 fn window_minimize(window: tauri::Window) -> Result<(), String> {
     window.minimize().map_err(to_string)
 }
 
 #[tauri::command]
+#[cfg(mobile)]
+fn window_minimize(_window: tauri::Window) -> Result<(), String> {
+    Ok(())
+}
+
+#[tauri::command]
+#[cfg(not(mobile))]
 fn window_toggle_maximize(window: tauri::Window) -> Result<(), String> {
     if window.is_maximized().map_err(to_string)? {
         window.unmaximize().map_err(to_string)
@@ -649,10 +918,24 @@ fn window_toggle_maximize(window: tauri::Window) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[cfg(mobile)]
+fn window_toggle_maximize(_window: tauri::Window) -> Result<(), String> {
+    Ok(())
+}
+
+#[tauri::command]
+#[cfg(not(mobile))]
 fn window_close(window: tauri::Window) -> Result<(), String> {
     window.hide().map_err(to_string)
 }
 
+#[tauri::command]
+#[cfg(mobile)]
+fn window_close(_window: tauri::Window) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(mobile))]
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let show = MenuItemBuilder::with_id("show", "Show").build(app)?;
     let capture = MenuItemBuilder::with_id("capture", "Quick capture").build(app)?;
@@ -858,6 +1141,7 @@ fn emit_memos_changed(app: &tauri::AppHandle, active_memo_id: Option<String>) {
     let _ = app.emit(EVENT_MEMOS_CHANGED, MemosChangedPayload { active_memo_id });
 }
 
+#[cfg(not(mobile))]
 fn second_instance_intent(argv: &[String]) -> SecondInstanceIntent {
     for arg in argv.iter().map(|arg| arg.to_ascii_lowercase()) {
         if arg == "--clipboard-capture"
@@ -876,11 +1160,13 @@ fn second_instance_intent(argv: &[String]) -> SecondInstanceIntent {
     SecondInstanceIntent::ShowMain
 }
 
+#[cfg(not(mobile))]
 fn setup_shortcuts(app: &tauri::AppHandle, settings: &AppSettings) -> anyhow::Result<()> {
     validate_settings(settings).map_err(anyhow::Error::msg)?;
     register_shortcut_handlers(app, settings).map_err(|error| anyhow::anyhow!(error))
 }
 
+#[cfg(not(mobile))]
 fn apply_shortcuts(app: &tauri::AppHandle, settings: &AppSettings) -> Result<(), String> {
     Shortcut::from_str(&settings.quick_capture_shortcut).map_err(to_string)?;
     Shortcut::from_str(&settings.clipboard_capture_shortcut).map_err(to_string)?;
@@ -891,6 +1177,7 @@ fn apply_shortcuts(app: &tauri::AppHandle, settings: &AppSettings) -> Result<(),
     register_shortcut_handlers(app, settings)
 }
 
+#[cfg(not(mobile))]
 fn check_shortcut_availability(
     app: &tauri::AppHandle,
     current: &AppSettings,
@@ -962,6 +1249,7 @@ fn check_shortcut_availability(
     })
 }
 
+#[cfg(not(mobile))]
 fn register_shortcut_handlers(
     app: &tauri::AppHandle,
     settings: &AppSettings,
@@ -996,6 +1284,7 @@ fn register_shortcut_handlers(
     Ok(())
 }
 
+#[cfg(not(mobile))]
 fn spawn_quick_capture(app: tauri::AppHandle, clipboard: bool) {
     std::thread::spawn(move || {
         if let Err(error) = reveal_quick_capture(&app) {
@@ -1008,6 +1297,7 @@ fn spawn_quick_capture(app: tauri::AppHandle, clipboard: bool) {
     });
 }
 
+#[cfg(not(mobile))]
 fn spawn_settings_window(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         if let Err(error) = reveal_settings(&app) {
@@ -1030,6 +1320,7 @@ fn reveal_window(app: &tauri::AppHandle, quick_capture: bool) -> Result<(), Stri
     Ok(())
 }
 
+#[cfg(not(mobile))]
 fn reveal_quick_capture(app: &tauri::AppHandle) -> Result<(), String> {
     let window = if let Some(window) = app.get_webview_window("quick-capture") {
         window
@@ -1061,6 +1352,12 @@ fn reveal_quick_capture(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(mobile)]
+fn reveal_quick_capture(app: &tauri::AppHandle) -> Result<(), String> {
+    reveal_window(app, true)
+}
+
+#[cfg(not(mobile))]
 fn reveal_settings(app: &tauri::AppHandle) -> Result<(), String> {
     let window = if let Some(window) = app.get_webview_window("settings") {
         window
@@ -1088,6 +1385,11 @@ fn reveal_settings(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(mobile)]
+fn reveal_settings(app: &tauri::AppHandle) -> Result<(), String> {
+    reveal_window(app, false)
+}
+
 fn load_or_create_device_id(data_dir: &std::path::Path) -> anyhow::Result<String> {
     let path = data_dir.join("device-id");
     if path.exists() {
@@ -1100,20 +1402,78 @@ fn load_or_create_device_id(data_dir: &std::path::Path) -> anyhow::Result<String
 
 fn load_settings(path: &Path) -> anyhow::Result<AppSettings> {
     if path.exists() {
-        let text = std::fs::read_to_string(path)?;
-        let settings = serde_json::from_str::<AppSettings>(&text)?;
-        validate_settings(&settings).map_err(anyhow::Error::msg)?;
-        return Ok(settings);
+        match read_settings_file(path) {
+            Ok(settings) => return Ok(settings),
+            Err(error) => {
+                eprintln!("settings file is invalid, restoring defaults: {error}");
+                quarantine_invalid_settings(path)?;
+            }
+        }
     }
     let settings = AppSettings::default();
     save_settings(path, &settings)?;
     Ok(settings)
 }
 
+fn read_settings_file(path: &Path) -> anyhow::Result<AppSettings> {
+    let text = std::fs::read_to_string(path)?;
+    let settings = serde_json::from_str::<AppSettings>(&text)?;
+    validate_settings(&settings).map_err(anyhow::Error::msg)?;
+    Ok(settings)
+}
+
+fn quarantine_invalid_settings(path: &Path) -> anyhow::Result<()> {
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Ok(());
+    };
+    let backup = path.with_file_name(format!("{file_name}.invalid-{}", Uuid::now_v7()));
+    std::fs::rename(path, backup)?;
+    Ok(())
+}
+
 fn save_settings(path: &Path, settings: &AppSettings) -> anyhow::Result<()> {
     let text = serde_json::to_string_pretty(settings)?;
-    std::fs::write(path, text)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        anyhow::bail!("settings path has no file name");
+    };
+    let tmp = path.with_file_name(format!("{file_name}.tmp-{}", Uuid::now_v7()));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)?;
+    file.write_all(text.as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+    replace_file(&tmp, path)?;
     Ok(())
+}
+
+fn replace_file(tmp: &Path, destination: &Path) -> anyhow::Result<()> {
+    match std::fs::rename(tmp, destination) {
+        Ok(()) => Ok(()),
+        Err(first_error) if destination.exists() => {
+            let Some(file_name) = destination.file_name().and_then(|name| name.to_str()) else {
+                return Err(first_error.into());
+            };
+            let backup =
+                destination.with_file_name(format!("{file_name}.replace-{}", Uuid::now_v7()));
+            std::fs::rename(destination, &backup)?;
+            match std::fs::rename(tmp, destination) {
+                Ok(()) => {
+                    let _ = std::fs::remove_file(backup);
+                    Ok(())
+                }
+                Err(error) => {
+                    let _ = std::fs::rename(&backup, destination);
+                    Err(error.into())
+                }
+            }
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn validate_settings(settings: &AppSettings) -> Result<(), String> {
@@ -1121,14 +1481,17 @@ fn validate_settings(settings: &AppSettings) -> Result<(), String> {
     {
         return Err("Sync endpoint must start with http:// or https://".to_string());
     }
-    unique_shortcuts([
-        settings.quick_capture_shortcut.as_str(),
-        settings.clipboard_capture_shortcut.as_str(),
-        settings.settings_shortcut.as_str(),
-    ])?;
-    Shortcut::from_str(&settings.quick_capture_shortcut).map_err(to_string)?;
-    Shortcut::from_str(&settings.clipboard_capture_shortcut).map_err(to_string)?;
-    Shortcut::from_str(&settings.settings_shortcut).map_err(to_string)?;
+    #[cfg(not(mobile))]
+    {
+        unique_shortcuts([
+            settings.quick_capture_shortcut.as_str(),
+            settings.clipboard_capture_shortcut.as_str(),
+            settings.settings_shortcut.as_str(),
+        ])?;
+        Shortcut::from_str(&settings.quick_capture_shortcut).map_err(to_string)?;
+        Shortcut::from_str(&settings.clipboard_capture_shortcut).map_err(to_string)?;
+        Shortcut::from_str(&settings.settings_shortcut).map_err(to_string)?;
+    }
     match settings.writing_mode.as_str() {
         "split" | "edit" | "preview" => {}
         _ => return Err("Writing mode must be split, edit, or preview".to_string()),
@@ -1141,6 +1504,10 @@ fn validate_settings(settings: &AppSettings) -> Result<(), String> {
                     .to_string(),
             )
         }
+    }
+    match settings.preview_markup_mode.as_str() {
+        "auto" | "markdown" | "typst" => {}
+        _ => return Err("Preview markup mode must be auto, markdown, or typst".to_string()),
     }
     match settings.preview_template.as_str() {
         "literary" | "compact" | "technical" | "magazine" | "notebook" => {}
@@ -1157,6 +1524,7 @@ fn validate_settings(settings: &AppSettings) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(mobile))]
 fn unique_shortcuts(shortcuts: [&str; 3]) -> Result<(), String> {
     for index in 0..shortcuts.len() {
         for next in (index + 1)..shortcuts.len() {
@@ -1199,6 +1567,50 @@ mod tests {
         };
 
         assert!(validate_settings(&settings).is_err());
+    }
+
+    #[test]
+    fn render_attachment_ids_are_extracted_once() {
+        let first = Uuid::parse_str("018f2b4f-1111-7222-8333-444444444444").unwrap();
+        let second = Uuid::parse_str("018f2b4f-aaaa-7222-8333-444444444444").unwrap();
+        let ids = attachment_ids_in_body(&format!(
+            "![a](memo-attachment:{first})\n#image(\"memo-attachment:{first}\")\n![b](memo-attachment:{second})"
+        ));
+
+        assert_eq!(ids, vec![first, second]);
+    }
+
+    #[test]
+    fn load_settings_recovers_invalid_file_with_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, "{ not json").unwrap();
+
+        let settings = load_settings(&path).unwrap();
+
+        assert_eq!(settings.server_url, AppSettings::default().server_url);
+        assert!(read_settings_file(&path).is_ok());
+        assert!(std::fs::read_dir(dir.path()).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("settings.json.invalid-")));
+    }
+
+    #[test]
+    fn save_settings_replaces_existing_file_with_valid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, "{}").unwrap();
+        let settings = AppSettings {
+            server_url: "https://sync.example.test".to_string(),
+            ..AppSettings::default()
+        };
+
+        save_settings(&path, &settings).unwrap();
+
+        let reloaded = read_settings_file(&path).unwrap();
+        assert_eq!(reloaded.server_url, "https://sync.example.test");
     }
 
     #[test]

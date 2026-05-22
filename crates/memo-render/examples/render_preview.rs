@@ -10,6 +10,7 @@ fn main() -> anyhow::Result<()> {
         body,
         format: RenderFormat::Markdown,
         template: RenderTemplate::Literary,
+        resources: Vec::new(),
     })?;
     let html = format!(
         r#"<!doctype html>

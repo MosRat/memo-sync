@@ -4,6 +4,24 @@ import { memoPreviewText } from "../search";
 
 const overscan = 4;
 
+function smoothScrollBehavior(): ScrollBehavior {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+}
+
+function useNarrowMemoList() {
+  const [narrow, setNarrow] = useState(() => (typeof window === "undefined" ? false : window.matchMedia("(max-width: 640px)").matches));
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 640px)");
+    const update = () => setNarrow(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  return narrow;
+}
+
 function MemoListView({
   memos,
   activeMemoId,
@@ -21,7 +39,8 @@ function MemoListView({
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState({ top: 0, height: 0 });
-  const rowHeight = density === "compact" ? 96 : 128;
+  const narrowList = useNarrowMemoList();
+  const rowHeight = narrowList ? (density === "compact" ? 84 : 112) : density === "compact" ? 96 : 128;
   const activeIndex = memos.findIndex((item) => item.id === activeMemoId);
   const range = useMemo(() => {
     const start = Math.max(0, Math.floor(viewport.top / rowHeight) - overscan);
@@ -37,11 +56,13 @@ function MemoListView({
     const update = () => setViewport({ top: element.scrollTop, height: element.clientHeight });
     update();
     element.addEventListener("scroll", update, { passive: true });
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    observer?.observe(element);
+    const fallback = observer ? null : window.setInterval(update, 500);
     return () => {
       element.removeEventListener("scroll", update);
-      observer.disconnect();
+      observer?.disconnect();
+      if (fallback !== null) window.clearInterval(fallback);
     };
   }, []);
 
@@ -50,10 +71,11 @@ function MemoListView({
     if (!element || activeIndex < 0) return;
     const top = activeIndex * rowHeight;
     const bottom = top + rowHeight;
+    const behavior = smoothScrollBehavior();
     if (top < element.scrollTop) {
-      element.scrollTo({ top, behavior: "smooth" });
+      element.scrollTo({ top, behavior });
     } else if (bottom > element.scrollTop + element.clientHeight) {
-      element.scrollTo({ top: bottom - element.clientHeight, behavior: "smooth" });
+      element.scrollTo({ top: bottom - element.clientHeight, behavior });
     }
   }, [activeIndex]);
 

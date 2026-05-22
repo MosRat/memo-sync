@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default desktop capability for Memo Sync.","local":true,"windows":["main","quick-capture","settings"],"permissions":["core:default","opener:default","notification:default","clipboard-manager:default","global-shortcut:default","autostart:default"]}}
+{"default":{"identifier":"default","description":"Default desktop capability for Memo Sync.","local":true,"windows":["main","quick-capture","settings"],"permissions":["core:default"]}}
