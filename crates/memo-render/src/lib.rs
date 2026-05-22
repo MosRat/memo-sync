@@ -335,6 +335,7 @@ fn decode_render_resources(
         .collect()
 }
 
+#[derive(Default)]
 struct RenderResourceIndex<'a> {
     by_attachment_id: HashMap<&'a str, &'a RenderBinaryResource>,
 }
@@ -362,14 +363,6 @@ impl<'a> RenderResourceIndex<'a> {
         self.by_attachment_id
             .get(id)
             .map(|resource| resource.virtual_path.as_str())
-    }
-}
-
-impl Default for RenderResourceIndex<'static> {
-    fn default() -> Self {
-        Self {
-            by_attachment_id: HashMap::new(),
-        }
     }
 }
 
@@ -463,6 +456,10 @@ impl RenderCache {
 
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 }
 
