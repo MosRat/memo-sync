@@ -27,6 +27,15 @@ cargo tauri dev --config apps/desktop/src-tauri/tauri.conf.json
 cargo run -p memo-server -- --bind 127.0.0.1:7373 --database memo-server.sqlite
 ```
 
+Linux servers can use the one-command installer. It installs the release binary, writes an environment file, and creates a systemd service when systemd is available:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MosRat/memo-sync/main/scripts/install-memo-server-linux.sh \
+  | sudo bash -s -- install --tag latest --bind 127.0.0.1:7373
+```
+
+See [docs/server-deployment.md](docs/server-deployment.md) for systemd, non-root, offline, reverse-proxy, upgrade, uninstall, and backup notes.
+
 For static Linux builds from Windows, use `cargo-zigbuild`:
 
 ```powershell
@@ -72,4 +81,4 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Release artifacts include Windows installer packages, an unsigned Android APK, and `SHA256SUMS.txt`.
+Release artifacts include Windows installer packages, a signed Android APK, a Linux `memo-server` archive, and `SHA256SUMS.txt`.

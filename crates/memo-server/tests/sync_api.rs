@@ -1590,6 +1590,161 @@ async fn wait_reports_existing_or_new_sequence_changes() {
     assert_eq!(unchanged.server_sequence, 1);
 }
 
+#[tokio::test]
+async fn health_reports_sequence_and_relay_metrics() {
+    let pool = open_pool("sqlite::memory:").await.unwrap();
+    let app = router(state(pool));
+    let repo = Repository::new("Work", RepositoryKind::Persistent, "#cc785c");
+    let memo = Memo::new(repo.id, "Health", "Body");
+    let data_base64 = BASE64_STANDARD.encode([1, 2, 3, 4, 5]);
+    let attachment = MemoAttachment::new(
+        memo.id,
+        repo.id,
+        "health.png",
+        "image/png",
+        5,
+        data_base64.clone(),
+    );
+
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            "/api/v1/sync/push",
+            &PushRequest {
+                protocol_version: SYNC_PROTOCOL_VERSION,
+                device_id: "device-a".to_string(),
+                client: None,
+                operations: vec![
+                    SyncOperation::new(
+                        "device-a",
+                        HybridLogicalClock {
+                            wall_time_ms: 310,
+                            counter: 0,
+                        },
+                        SyncOperationKind::UpsertMemo(memo),
+                    ),
+                    SyncOperation::new(
+                        "device-a",
+                        HybridLogicalClock {
+                            wall_time_ms: 311,
+                            counter: 0,
+                        },
+                        SyncOperationKind::UpsertAttachment(attachment),
+                    ),
+                ],
+            },
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            "/api/v1/sync/attachment-blobs/relay",
+            &AttachmentBlobRelayRequest {
+                protocol_version: SYNC_PROTOCOL_VERSION,
+                device_id: "device-b".to_string(),
+                blobs: vec![AttachmentBlobPayload {
+                    descriptor: memo_core::AttachmentBlobDescriptor {
+                        content_sha256:
+                            "74f81fe167d99b4cb41d6d0ccda82278caee9f3e2f25d5e5a3936ff3dcec60d0"
+                                .to_string(),
+                        media_type: "image/png".to_string(),
+                        byte_len: 5,
+                    },
+                    data_base64,
+                }],
+                ttl_secs: Some(60),
+            },
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app.oneshot(get_request("/health")).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let health: HealthResponse = read_json(response).await;
+    assert!(health.ok);
+    assert_eq!(health.protocol_version, SYNC_PROTOCOL_VERSION);
+    assert_eq!(health.server_sequence, 2);
+    assert_eq!(health.min_available_sequence, 0);
+    assert_eq!(health.attachment_count, 1);
+    assert_eq!(health.attachment_blob_count, 0);
+    assert_eq!(health.attachment_blob_bytes, 0);
+    assert_eq!(health.relay_blob_count, 1);
+    assert_eq!(health.relay_blob_bytes, 5);
+    assert_eq!(health.relay_device_count, 1);
+}
+
+#[tokio::test]
+async fn pull_clamps_zero_limit_to_one_operation() {
+    let pool = open_pool("sqlite::memory:").await.unwrap();
+    let app = router(state(pool));
+    let repo = Repository::new("Work", RepositoryKind::Persistent, "#cc785c");
+    let operations = (0..2)
+        .map(|index| {
+            SyncOperation::new(
+                "device-a",
+                HybridLogicalClock {
+                    wall_time_ms: 320 + index,
+                    counter: 0,
+                },
+                SyncOperationKind::UpsertMemo(Memo::new(repo.id, format!("Memo {index}"), "Body")),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            "/api/v1/sync/push",
+            &PushRequest {
+                protocol_version: SYNC_PROTOCOL_VERSION,
+                device_id: "device-a".to_string(),
+                client: None,
+                operations,
+            },
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .oneshot(json_request(
+            "/api/v1/sync/pull",
+            &PullRequest {
+                protocol_version: SYNC_PROTOCOL_VERSION,
+                since_sequence: 0,
+                repository_ids: vec![],
+                exclude_device_id: None,
+                limit: 0,
+                client: None,
+            },
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let pulled: PullResponse = read_json(response).await;
+    assert_eq!(pulled.operations.len(), 1);
+    assert!(pulled.has_more);
+    assert_eq!(pulled.server_sequence, 1);
+}
+
+#[derive(Deserialize)]
+struct HealthResponse {
+    ok: bool,
+    server_sequence: i64,
+    min_available_sequence: i64,
+    protocol_version: u16,
+    attachment_count: i64,
+    attachment_blob_count: i64,
+    attachment_blob_bytes: i64,
+    relay_blob_count: i64,
+    relay_blob_bytes: i64,
+    relay_device_count: i64,
+}
+
 #[derive(Deserialize)]
 struct WaitResponse {
     changed: bool,
