@@ -66,6 +66,10 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
 
+      - name: Check Linux deploy script syntax
+        shell: bash
+        run: bash -n scripts/install-memo-server-linux.sh
+
       - name: Run Rust clippy
         run: cargo clippy --workspace --all-targets --no-deps -- -D warnings
 
