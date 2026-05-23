@@ -69,6 +69,30 @@ pnpm --dir apps/desktop android:e-drive:build-release-typst
 
 The dependency split is implemented by keeping `memo-render`'s `typst-render` feature enabled by default for desktop and tests, while Android depends on the lightweight renderer unless `mobile-typst-render` is explicitly activated.
 
+## Android Release Signing
+
+Android release signing follows Tauri v2's Android signing path: create an ignored `apps/desktop/src-tauri/gen/android/keystore.properties` file and let the generated Gradle project sign the release build when that file exists.
+
+Local `keystore.properties` shape:
+
+```properties
+storeFile=upload-keystore.jks
+storePassword=<store-password>
+keyAlias=<key-alias>
+keyPassword=<key-password>
+```
+
+`storeFile` is resolved from `apps/desktop/src-tauri/gen/android`, so keep the keystore next to `keystore.properties` or use a path relative to that directory. Both `keystore.properties` and keystore files must stay out of git.
+
+GitHub Actions release signing uses repository secrets:
+
+- `ANDROID_RELEASE_KEYSTORE_BASE64`
+- `ANDROID_RELEASE_KEY_ALIAS`
+- `ANDROID_RELEASE_KEY_PASSWORD`
+- `ANDROID_RELEASE_STORE_PASSWORD`
+
+The Release workflow decodes the keystore and writes a temporary `keystore.properties` during the Android job. Missing secrets fail the release build before compilation so an accidentally unsigned release is not published.
+
 ## Toolchain Requirements
 
 Android:
@@ -138,7 +162,8 @@ pnpm --dir apps/desktop android:e-drive:devices
 Current validated APK outputs:
 
 - Debug: `apps/desktop/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`
-- Release unsigned: `apps/desktop/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk`
+- Release signed, when `keystore.properties` exists: `apps/desktop/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk`
+- Release unsigned, when no signing file exists: `apps/desktop/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk`
 
 Observed size notes:
 
